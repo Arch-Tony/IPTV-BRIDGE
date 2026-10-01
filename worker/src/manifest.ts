@@ -42,19 +42,21 @@ export async function getManifest(config: UserConfig, baseUrl: string, ctx: Exec
   if (configured) {
     const tasks: Promise<StremioCatalog>[] = [];
     if (config.includeLive !== false) tasks.push(makeCatalog(config, ctx, 'tv', 'channel', 'iptv_live', 'IPTV Live Channels'));
-    if (config.includeMovies !== false) tasks.push(makeCatalog(config, ctx, 'movie', 'movie', 'iptv_movies', 'IPTV Movies'));
-    if (config.includeSeries !== false) tasks.push(makeCatalog(config, ctx, 'series', 'series', 'iptv_series', 'IPTV Series'));
+    if (config.includeMovies !== false)
+      tasks.push(makeCatalog(config, ctx, 'movie', 'movie', 'recent_movies', 'Nouveautés films'));
+    if (config.includeSeries !== false)
+      tasks.push(makeCatalog(config, ctx, 'series', 'series', 'recent_series', 'Nouveautés séries'));
     catalogs.push(...(await Promise.all(tasks)));
   }
 
   const logo = `${baseUrl}/logo.png`;
 
   return {
-    id: 'org.iptv.bridge',
-    version: '2.0.0',
-    name: 'IPTV Bridge',
+    id: 'org.iptv.bridge.frrecent',
+    version: '2.1.0',
+    name: 'IPTV Bridge · Nouveautés FR',
     description:
-      'Xtream & M3U IPTV bridge for Stremio & Nuvio — genre-filtered Live/Movies/Series catalogs, global search and TMDB resolution, served from the edge.',
+      'Personal Sipario bridge — newest Xtream movies and series first, selected-category-only matching, global search and TMDB resolution.',
     logo,
     resources: [
       { name: 'catalog', types: ['tv', 'movie', 'series'] },
