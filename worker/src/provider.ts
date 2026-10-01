@@ -12,6 +12,29 @@ function xtKind(kind: MediaKind): 'live' | 'movie' | 'series' {
   return kind === 'channel' ? 'live' : kind;
 }
 
+function parseProviderTimestamp(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    // Xtream normally uses Unix seconds, but tolerate millisecond timestamps.
+    return numeric > 10_000_000_000 ? Math.floor(numeric / 1000) : Math.floor(numeric);
+  }
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : undefined;
+}
+
+function selectedXtreamCategoryIds(config: UserConfig, kind: MediaKind): Set<string> | null {
+  const selected = config.includedCategories?.map(String).filter(Boolean);
+  if (!selected?.length) return null;
+
+  const prefix = kind === 'channel' ? 'live_' : kind === 'movie' ? 'vod_' : 'series_';
+  const ids = selected.filter((id) => id.startsWith(prefix)).map((id) => id.slice(prefix.length));
+
+  // A configured category list means "only these categories". If none belong
+  // to this media kind, return an empty set rather than silently widening scope.
+  return new Set(ids);
+}
+
 function buildXtreamItems(
   raw: RawStream[],
   kind: MediaKind,
@@ -43,7 +66,9 @@ function buildXtreamItems(
       logo: (s.stream_icon || s.cover || s.movie_image) as string | undefined,
       url,
       year: cleaned.year || (rawYear ? parseInt(String(rawYear).substring(0, 4), 10) : undefined),
-      containerExtension: ext
+      containerExtension: ext,
+      addedAt: parseProviderTimestamp(s.added),
+      updatedAt: parseProviderTimestamp(s.last_modified)
     });
   }
   return out;
@@ -62,7 +87,11 @@ export async function getItems(config: UserConfig, kind: MediaKind, ctx: Executi
         client.getStreams(xt)
       ]);
       const catMap = new Map(cats.map((c) => [c.category_id, c.category_name]));
-      return buildXtreamItems(raw, kind, catMap, client);
+      const selected = selectedXtreamCategoryIds(config, kind);
+      const filtered = selected
+        ? raw.filter((stream) => selected.has(String(stream.category_id ?? '')))
+        : raw;
+      return buildXtreamItems(filtered, kind, catMap, client);
     });
   }
 
