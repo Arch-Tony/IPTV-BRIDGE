@@ -63,6 +63,15 @@ export async function handleCatalog(
 
   let items = await getItems(config, kind, ctx);
   if (genre) items = items.filter((i) => i.category === genre);
+
+  // Sipario home rows should surface the provider's newest additions first.
+  // Movies generally expose `added`; series commonly expose `last_modified`
+  // when a new episode arrives, with `added` as a fallback.
+  if (kind === 'movie' || kind === 'series') {
+    const recentTs = (item: (typeof items)[number]): number =>
+      kind === 'series' ? item.updatedAt ?? item.addedAt ?? 0 : item.addedAt ?? item.updatedAt ?? 0;
+    items = [...items].sort((a, b) => recentTs(b) - recentTs(a));
+  }
   if (search) {
     const q = search.toLowerCase();
     items = items.filter((i) => i.title.toLowerCase().includes(q) || i.cleanTitle.toLowerCase().includes(q));

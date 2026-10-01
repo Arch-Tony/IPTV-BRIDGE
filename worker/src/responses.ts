@@ -31,7 +31,7 @@ export function json(data: unknown, opts: JsonOpts = {}): Response {
 // Sensible edge cache windows per resource.
 export const CACHE = {
   manifest: 'public, max-age=600, stale-while-revalidate=1800',
-  catalog: 'public, max-age=300, stale-while-revalidate=900',
+  catalog: 'public, max-age=60, stale-while-revalidate=60',
   meta: 'public, max-age=1800, stale-while-revalidate=3600',
   stream: 'public, max-age=60, stale-while-revalidate=300'
 };

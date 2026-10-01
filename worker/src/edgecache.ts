@@ -64,7 +64,7 @@ export async function edgeCached<T>(
 
 export const TTL = {
   CATEGORIES: 6 * 60 * 60, // 6h
-  STREAMS: 3 * 60 * 60, // 3h
+  STREAMS: 5 * 60, // 5m — keep Sipario novelty rows close to the provider
   PLAYLIST: 3 * 60 * 60, // 3h
   EPISODES: 60 * 60, // 1h
   TMDB: 24 * 60 * 60 // 24h
