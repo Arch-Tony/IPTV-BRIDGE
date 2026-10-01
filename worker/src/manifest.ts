@@ -41,7 +41,8 @@ export async function getManifest(config: UserConfig, baseUrl: string, ctx: Exec
   const catalogs: StremioCatalog[] = [];
   if (configured) {
     const tasks: Promise<StremioCatalog>[] = [];
-    if (config.includeLive !== false) tasks.push(makeCatalog(config, ctx, 'tv', 'channel', 'iptv_live', 'IPTV Live Channels'));
+    // Sipario already handles the user's live Xtream source directly. This
+    // personalized addon intentionally adds only the two useful home rows.
     if (config.includeMovies !== false)
       tasks.push(makeCatalog(config, ctx, 'movie', 'movie', 'recent_movies', 'Nouveautés films'));
     if (config.includeSeries !== false)
