@@ -337,18 +337,24 @@ async function resolveGlobalStreams(
 
   let titles: string[] = [];
   let year: number | undefined;
+  let targetTmdbId: string | undefined;
 
   if (baseId.startsWith('tt')) {
     const found = await tmdb.getByImdbId(baseId);
     if (found) {
-      const src = found.details;
+      // The /find response is intentionally light. Fetch the full TMDb object
+      // so matching can also use localized and alternative titles.
+      const full = found.details?.id ? await tmdb.getByTmdbId(found.details.id, found.type) : null;
+      const src = full || found.details;
+      targetTmdbId = src?.id !== undefined ? String(src.id) : undefined;
       titles = tmdb.collectTitles(src, found.type);
       const rd = src.release_date || src.first_air_date;
       if (rd) year = parseInt(String(rd).substring(0, 4), 10);
     }
   } else if (baseId.startsWith('tmdb:')) {
     const tmdbType = isSeries ? 'series' : 'movie';
-    const full = await tmdb.getByTmdbId(baseId.replace('tmdb:', ''), tmdbType);
+    targetTmdbId = baseId.replace('tmdb:', '');
+    const full = await tmdb.getByTmdbId(targetTmdbId, tmdbType);
     if (full) {
       titles = tmdb.collectTitles(full, tmdbType);
       const rd = full.release_date || full.first_air_date;
@@ -363,6 +369,39 @@ async function resolveGlobalStreams(
   if (!titles.length) return [];
 
   const available = await availablePromise;
+
+  // Strongest possible match: some Xtream providers expose the TMDb id on
+  // their VOD/series entries. Prefer that over any title comparison.
+  const directTmdbMatches = targetTmdbId
+    ? available.filter((item) => item.tmdbId && String(item.tmdbId) === targetTmdbId)
+    : [];
+
+  if (!isSeries && directTmdbMatches.length) {
+    return itemsToStreams(directTmdbMatches.map((item) => ({ item, score: 1 })));
+  }
+
+  if (
+    isSeries &&
+    config.type === 'xtream' &&
+    season !== undefined &&
+    episode !== undefined &&
+    directTmdbMatches.length
+  ) {
+    const client = new XtreamClient(config.host!, config.username!, config.password!);
+    for (const item of directTmdbMatches.slice(0, 3)) {
+      if (item.streamId === undefined) continue;
+      const eps = await client.getEpisodeStreams(item.streamId, season, episode);
+      if (eps.length) {
+        return eps.map((e) => ({
+          name: `IPTV${e.quality ? ' ' + e.quality : ''}`,
+          title: `${item.title} • S${season}E${episode}`,
+          url: e.url,
+          quality: e.quality
+        }));
+      }
+    }
+  }
+
   const indexed = await getTitleMatches(config, kind as 'movie' | 'series', titles, ctx);
   const candidatePool = indexed.length ? indexed : available;
 
