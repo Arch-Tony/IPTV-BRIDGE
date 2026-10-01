@@ -67,6 +67,11 @@ function buildXtreamItems(
       url,
       year: cleaned.year || (rawYear ? parseInt(String(rawYear).substring(0, 4), 10) : undefined),
       containerExtension: ext,
+      tmdbId: s.tmdb_id !== undefined && s.tmdb_id !== null && String(s.tmdb_id).trim()
+        ? String(s.tmdb_id).trim()
+        : s.tmdb !== undefined && s.tmdb !== null && String(s.tmdb).trim()
+          ? String(s.tmdb).trim()
+          : undefined,
       addedAt: parseProviderTimestamp(s.added),
       updatedAt: parseProviderTimestamp(s.last_modified)
     });
