@@ -36,8 +36,8 @@ export class TMDBClient {
 
   async getByImdbId(imdbId: string): Promise<{ type: 'movie' | 'series'; details: any } | null> {
     const data = await this.get(
-      `find:${imdbId}`,
-      `${BASE}/find/${encodeURIComponent(imdbId)}?api_key=${this.apiKey}&external_source=imdb_id`
+      `find:fr:${imdbId}`,
+      `${BASE}/find/${encodeURIComponent(imdbId)}?api_key=${this.apiKey}&external_source=imdb_id&language=fr-FR`
     );
     if (!data) return null;
     if (data.movie_results?.length) return { type: 'movie', details: data.movie_results[0] };
@@ -49,8 +49,8 @@ export class TMDBClient {
     const cleanId = String(tmdbId).replace(/^tmdb:/, '');
     const endpoint = type === 'movie' ? 'movie' : 'tv';
     return this.get(
-      `${type}:${cleanId}`,
-      `${BASE}/${endpoint}/${encodeURIComponent(cleanId)}?api_key=${this.apiKey}&append_to_response=external_ids,alternative_titles,credits,videos`
+      `${type}:fr:${cleanId}`,
+      `${BASE}/${endpoint}/${encodeURIComponent(cleanId)}?api_key=${this.apiKey}&language=fr-FR&append_to_response=external_ids,alternative_titles,credits,videos`
     );
   }
 
@@ -68,16 +68,16 @@ export class TMDBClient {
   async getSeasonEpisodes(tmdbId: number | string, season: number): Promise<any[]> {
     const cleanId = String(tmdbId).replace(/^tmdb:/, '');
     const data = await this.get(
-      `season:${cleanId}:${season}`,
-      `${BASE}/tv/${encodeURIComponent(cleanId)}/season/${season}?api_key=${this.apiKey}`
+      `season:fr:${cleanId}:${season}`,
+      `${BASE}/tv/${encodeURIComponent(cleanId)}/season/${season}?api_key=${this.apiKey}&language=fr-FR`
     );
     return data?.episodes || [];
   }
 
   async bestSearchMatch(title: string, type: 'movie' | 'series', year?: number): Promise<any | null> {
     const endpoint = type === 'movie' ? 'movie' : 'tv';
-    let url = `${BASE}/search/${endpoint}?api_key=${this.apiKey}&query=${encodeURIComponent(title)}&include_adult=false`;
-    let key = `search:${type}:${title.toLowerCase()}:${year || ''}`;
+    let url = `${BASE}/search/${endpoint}?api_key=${this.apiKey}&query=${encodeURIComponent(title)}&include_adult=false&language=fr-FR`;
+    let key = `search:fr:${type}:${title.toLowerCase()}:${year || ''}`;
     if (year) url += type === 'movie' ? `&year=${year}` : `&first_air_date_year=${year}`;
     const data = await this.get(key, url);
     const results = data?.results;
