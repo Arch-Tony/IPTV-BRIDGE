@@ -1,7 +1,7 @@
 // Stremio/Nuvio addon protocol handlers (per-user config). Ported from the Node
 // addon: provider data is edge-cached per user, TMDB is edge-cached globally.
 
-import { validateConfig } from './config';
+import { configFingerprint, validateConfig } from './config';
 import { cleanTitle, titleIdentity } from './cleaner';
 import { decodeItemId, encodeItemId, isItemId } from './id';
 import { getItems, getTitleMatches } from './provider';
@@ -9,6 +9,7 @@ import { itemsToStreams, rankMatches } from './matcher';
 import { TMDBClient } from './tmdb';
 import { XtreamClient } from './xtream';
 import { CACHE, json } from './responses';
+import { edgeGet, edgePut, TTL } from './edgecache';
 import { isSafeProtocolId } from './security';
 import { Env, MediaKind, StremioMeta, StremioStream, UserConfig } from './types';
 
@@ -23,6 +24,37 @@ function tmdbFor(config: UserConfig, env: Env, ctx: ExecutionContext): TMDBClien
 }
 
 const CATALOG_PAGE_SIZE = 20;
+
+interface CatalogSourceRef {
+  streamId: string | number;
+  title: string;
+  containerExtension?: string;
+  category?: string;
+  tmdbId?: string;
+}
+
+function catalogSourceKey(config: UserConfig, kind: 'movie' | 'series', externalId: string): string {
+  return `catalog-source:${configFingerprint(config)}:${kind}:${externalId}`;
+}
+
+function rememberCatalogSources(
+  config: UserConfig,
+  kind: 'movie' | 'series',
+  externalId: string,
+  refs: CatalogSourceRef[],
+  ctx: ExecutionContext
+): void {
+  if (!refs.length) return;
+  edgePut(ctx, catalogSourceKey(config, kind, externalId), refs, TTL.CATALOG_MAP);
+}
+
+async function getRememberedCatalogSources(
+  config: UserConfig,
+  kind: 'movie' | 'series',
+  externalId: string
+): Promise<CatalogSourceRef[]> {
+  return (await edgeGet<CatalogSourceRef[]>(catalogSourceKey(config, kind, externalId))) || [];
+}
 
 async function resolveCatalogImdbId(
   item: Awaited<ReturnType<typeof getItems>>[number],
@@ -124,6 +156,26 @@ export async function handleCatalog(
   if (kind === 'movie' || kind === 'series') {
     const tmdb = tmdbFor(config, env, ctx);
     catalogIds = await Promise.all(page.map((item) => resolveCatalogImdbId(item, kind, tmdb)));
+  }
+
+  if (kind === 'movie' || kind === 'series') {
+    const grouped = new Map<string, CatalogSourceRef[]>();
+    page.forEach((item, index) => {
+      const externalId = catalogIds[index];
+      if (!externalId || !externalId.startsWith('tt') || item.streamId === undefined) return;
+      const list = grouped.get(externalId) || [];
+      list.push({
+        streamId: item.streamId,
+        title: item.title,
+        containerExtension: item.containerExtension,
+        category: item.category,
+        tmdbId: item.tmdbId
+      });
+      grouped.set(externalId, list);
+    });
+    for (const [externalId, refs] of grouped) {
+      rememberCatalogSources(config, kind, externalId, refs, ctx);
+    }
   }
 
   const metas = page.map((item, index) => ({
@@ -369,6 +421,37 @@ async function resolveGlobalStreams(
   if (!titles.length) return [];
 
   const available = await availablePromise;
+
+  // Best path for cards that came from our own "Nouveautés" rows: remember the
+  // exact Xtream source that produced the IMDb card, so opening the details
+  // page never loses the provider-side series/movie reference.
+  if (config.type === 'xtream' && baseId.startsWith('tt')) {
+    const remembered = await getRememberedCatalogSources(config, kind as 'movie' | 'series', baseId);
+    if (remembered.length) {
+      const client = new XtreamClient(config.host!, config.username!, config.password!);
+
+      if (!isSeries) {
+        return remembered.map((ref) => ({
+          name: 'IPTV',
+          title: `${ref.title}${ref.category ? ` • ${ref.category}` : ''}`,
+          url: client.movieUrl(ref.streamId, ref.containerExtension || 'mp4')
+        }));
+      }
+
+      if (season !== undefined && episode !== undefined) {
+        for (const ref of remembered) {
+          const eps = await client.getEpisodeStreams(ref.streamId, season, episode);
+          if (!eps.length) continue;
+          return eps.map((e) => ({
+            name: `IPTV${e.quality ? ' ' + e.quality : ''}`,
+            title: `${ref.title} • S${season}E${episode}`,
+            url: e.url,
+            quality: e.quality
+          }));
+        }
+      }
+    }
+  }
 
   // Strongest possible match: some Xtream providers expose the TMDb id on
   // their VOD/series entries. Prefer that over any title comparison.
