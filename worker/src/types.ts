@@ -41,6 +41,10 @@ export interface ProviderItem {
   season?: number;
   episode?: number;
   containerExtension?: string;
+  /** Provider-side creation/addition timestamp, Unix seconds when available. */
+  addedAt?: number;
+  /** Provider-side update timestamp, Unix seconds when available. */
+  updatedAt?: number;
 }
 
 export interface Genre {
