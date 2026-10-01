@@ -21,6 +21,10 @@ export interface RawStream {
   year?: string | number;
   releaseDate?: string;
   release_date?: string;
+  /** Xtream provider-side add timestamp (usually Unix seconds). */
+  added?: string | number;
+  /** Xtream series/provider update timestamp (usually Unix seconds). */
+  last_modified?: string | number;
   plot?: string;
   backdrop_path?: string[] | string;
 }
