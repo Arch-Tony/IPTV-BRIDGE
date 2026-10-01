@@ -412,9 +412,11 @@ async function resolveGlobalStreams(
     targetEpisode: config.type === 'm3u' ? episode : undefined,
     minScore: 0.62
   });
-  if (!matches.length) return [];
 
-  if (!isSeries || config.type === 'm3u') return itemsToStreams(matches);
+  if (!isSeries || config.type === 'm3u') {
+    if (!matches.length) return [];
+    return itemsToStreams(matches);
+  }
 
   if (config.type === 'xtream' && season !== undefined && episode !== undefined) {
     const client = new XtreamClient(config.host!, config.username!, config.password!);
