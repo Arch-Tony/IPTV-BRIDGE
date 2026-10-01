@@ -89,6 +89,11 @@ export interface StremioMeta {
   year?: number | string;
   genres?: string[];
   imdbRating?: string;
+  released?: string;
+  runtime?: string;
+  director?: string[];
+  cast?: string[];
+  trailers?: Array<{ source: string; type: 'Trailer' | 'Clip' }>;
   videos?: Array<{
     id: string;
     title: string;
