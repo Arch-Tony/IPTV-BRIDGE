@@ -54,14 +54,14 @@ export async function getManifest(config: UserConfig, baseUrl: string, ctx: Exec
 
   return {
     id: 'org.iptv.bridge.frrecent',
-    version: '2.6.0',
+    version: '2.7.0',
     name: 'IPTV Bridge · Nouveautés FR',
     description:
       'Personal Sipario bridge — newest Xtream movies and series first, selected-category-only matching, Cinemeta/IMDb detail-page handoff and global stream resolution.',
     logo,
     resources: [
       { name: 'catalog', types: ['tv', 'movie', 'series'] },
-      { name: 'meta', types: ['tv', 'movie', 'series'], idPrefixes: ['iptv:', 'tmdb:', 'tt'] },
+      { name: 'meta', types: ['tv', 'movie', 'series'], idPrefixes: ['iptv:', 'tmdb:'] },
       { name: 'stream', types: ['movie', 'series', 'tv'], idPrefixes: ['iptv:', 'tt', 'tmdb:'] }
     ],
     types: ['tv', 'movie', 'series'],
