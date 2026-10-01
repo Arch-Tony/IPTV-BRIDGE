@@ -2,7 +2,7 @@
 // addon: provider data is edge-cached per user, TMDB is edge-cached globally.
 
 import { validateConfig } from './config';
-import { cleanTitle } from './cleaner';
+import { cleanTitle, titleIdentity } from './cleaner';
 import { decodeItemId, encodeItemId, isItemId } from './id';
 import { getItems, getTitleMatches } from './provider';
 import { itemsToStreams, rankMatches } from './matcher';
@@ -20,6 +20,43 @@ function typeToKind(type: string): MediaKind {
 
 function tmdbFor(config: UserConfig, env: Env, ctx: ExecutionContext): TMDBClient {
   return new TMDBClient(config.tmdbApiKey || env.TMDB_FALLBACK_KEY, ctx);
+}
+
+const CATALOG_PAGE_SIZE = 30;
+
+async function resolveCatalogTmdbId(
+  item: Awaited<ReturnType<typeof getItems>>[number],
+  kind: 'movie' | 'series',
+  tmdb: TMDBClient
+): Promise<string | undefined> {
+  if (item.tmdbId && /^\d+$/.test(item.tmdbId)) return `tmdb:${item.tmdbId}`;
+
+  const clean = cleanTitle(item.title).cleanTitle || item.title;
+  const found = await tmdb.bestSearchMatch(clean, kind, item.year);
+  if (!found?.id) return undefined;
+
+  const sourceIdentity = titleIdentity(clean);
+  const candidateTitles =
+    kind === 'movie'
+      ? [found.title, found.original_title]
+      : [found.name, found.original_name];
+  const titleMatches = candidateTitles
+    .filter(Boolean)
+    .some((title: unknown) => titleIdentity(String(title)) === sourceIdentity);
+
+  const releaseDate = kind === 'movie' ? found.release_date : found.first_air_date;
+  const resultYear = releaseDate ? parseInt(String(releaseDate).slice(0, 4), 10) : undefined;
+
+  // With a provider year, allow localized titles but reject a materially
+  // different release year. Without a year, require an exact normalized title
+  // match so a catalog card never jumps to an unrelated TMDb entry.
+  if (item.year && resultYear) {
+    if (Math.abs(resultYear - item.year) > 1) return undefined;
+  } else if (!titleMatches) {
+    return undefined;
+  }
+
+  return `tmdb:${found.id}`;
 }
 
 export interface CatalogParams {
@@ -77,9 +114,20 @@ export async function handleCatalog(
     items = items.filter((i) => i.title.toLowerCase().includes(q) || i.cleanTitle.toLowerCase().includes(q));
   }
 
-  const page = items.slice(skip, skip + 100);
-  const metas = page.map((item) => ({
-    id: encodeItemId(item),
+  // Keep each catalog page below the Worker/TMDb subrequest budget. Sipario can
+  // request further pages through `skip`, while the home row stays fast.
+  const page = items.slice(skip, skip + CATALOG_PAGE_SIZE);
+  let catalogIds: Array<string | undefined> = page.map(() => undefined);
+  if (kind === 'movie' || kind === 'series') {
+    const tmdb = tmdbFor(config, env, ctx);
+    catalogIds = await Promise.all(page.map((item) => resolveCatalogTmdbId(item, kind, tmdb)));
+  }
+
+  const metas = page.map((item, index) => ({
+    // TMDb-backed cards open Sipario's rich details page (cast, synopsis,
+    // trailers, recommendations). If matching is uncertain, retain the IPTV id
+    // rather than risk opening the wrong movie/series.
+    id: catalogIds[index] || encodeItemId(item),
     type: params.type,
     name: cleanTitle(item.title).cleanTitle || item.title,
     poster: item.logo || fallbackPoster,
