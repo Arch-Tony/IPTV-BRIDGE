@@ -50,7 +50,7 @@ export class TMDBClient {
     const endpoint = type === 'movie' ? 'movie' : 'tv';
     return this.get(
       `${type}:${cleanId}`,
-      `${BASE}/${endpoint}/${encodeURIComponent(cleanId)}?api_key=${this.apiKey}&append_to_response=external_ids,alternative_titles`
+      `${BASE}/${endpoint}/${encodeURIComponent(cleanId)}?api_key=${this.apiKey}&append_to_response=external_ids,alternative_titles,credits,videos`
     );
   }
 
@@ -91,6 +91,20 @@ export class TMDBClient {
     const releaseDate = isMovie ? tmdbData.release_date : tmdbData.first_air_date;
     const year = releaseDate ? String(releaseDate).substring(0, 4) : undefined;
 
+    const directors = (tmdbData.credits?.crew || [])
+      .filter((p: any) => p?.job === 'Director' && p?.name)
+      .map((p: any) => p.name)
+      .slice(0, 5);
+    const cast = (tmdbData.credits?.cast || [])
+      .filter((p: any) => p?.name)
+      .map((p: any) => p.name)
+      .slice(0, 20);
+    const trailers = (tmdbData.videos?.results || [])
+      .filter((v: any) => v?.site === 'YouTube' && v?.key && ['Trailer', 'Teaser', 'Clip'].includes(v.type))
+      .slice(0, 6)
+      .map((v: any) => ({ source: String(v.key), type: v.type === 'Trailer' ? 'Trailer' : 'Clip' as 'Trailer' | 'Clip' }));
+    const runtimeMinutes = isMovie ? tmdbData.runtime : tmdbData.episode_run_time?.[0];
+
     return {
       id,
       type: isMovie ? 'movie' : 'series',
@@ -100,8 +114,13 @@ export class TMDBClient {
       description: tmdbData.overview,
       year,
       releaseInfo: year,
+      released: releaseDate ? `${releaseDate}T00:00:00.000Z` : undefined,
+      runtime: runtimeMinutes ? `${runtimeMinutes}m` : undefined,
       imdbRating: tmdbData.vote_average ? String(Math.round(tmdbData.vote_average * 10) / 10) : undefined,
-      genres: tmdbData.genres ? tmdbData.genres.map((g: any) => g.name) : []
+      genres: tmdbData.genres ? tmdbData.genres.map((g: any) => g.name) : [],
+      director: directors.length ? directors : undefined,
+      cast: cast.length ? cast : undefined,
+      trailers: trailers.length ? trailers : undefined
     };
   }
 }
