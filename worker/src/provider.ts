@@ -118,7 +118,9 @@ export async function getGenres(config: UserConfig, kind: MediaKind, ctx: Execut
     return edgeCached(ctx, `xt:genres:${fp}:${kind}`, TTL.CATEGORIES, async () => {
       const client = new XtreamClient(config.host!, config.username!, config.password!);
       const cats = await client.getCategories(xtKind(kind)).catch(() => []);
-      return cats.map((c) => ({ id: c.category_id, name: c.category_name }));
+      const selected = selectedXtreamCategoryIds(config, kind);
+      const visible = selected ? cats.filter((c) => selected.has(String(c.category_id))) : cats;
+      return visible.map((c) => ({ id: c.category_id, name: c.category_name }));
     });
   }
 
