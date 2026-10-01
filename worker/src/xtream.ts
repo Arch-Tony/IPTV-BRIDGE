@@ -21,6 +21,9 @@ export interface RawStream {
   year?: string | number;
   releaseDate?: string;
   release_date?: string;
+  /** TMDb id when exposed directly by the Xtream provider. */
+  tmdb?: string | number;
+  tmdb_id?: string | number;
   /** Xtream provider-side add timestamp (usually Unix seconds). */
   added?: string | number;
   /** Xtream series/provider update timestamp (usually Unix seconds). */
