@@ -153,6 +153,42 @@ export async function handleMeta(
   const fallbackPoster = `${baseUrl}/logo.png`;
   const tmdb = tmdbFor(config, env, ctx);
 
+  // Catalog cards may use TMDb ids. Serve full metadata for those ids so
+  // Sipario can render a real detail page instead of only resolving streams.
+  if (id.startsWith('tmdb:')) {
+    const tmdbId = id.split(':')[1];
+    if (!/^\d+$/.test(tmdbId || '')) return json({ meta: null }, { cache: CACHE.meta });
+
+    const tmdbType = type === 'series' ? 'series' : 'movie';
+    const metaId = `tmdb:${tmdbId}`;
+    const full = await tmdb.getByTmdbId(tmdbId, tmdbType);
+    if (!full) return json({ meta: null }, { cache: CACHE.meta });
+
+    const meta = tmdb.formatToStremioMeta(full, tmdbType, metaId);
+    if (tmdbType === 'series') {
+      const seasons: number[] = (full.seasons || [])
+        .map((s: any) => s.season_number)
+        .filter((n: number) => n && n > 0);
+      const videos: NonNullable<StremioMeta['videos']> = [];
+      for (const sNum of seasons.slice(0, 20)) {
+        const eps = await tmdb.getSeasonEpisodes(full.id, sNum);
+        for (const ep of eps) {
+          videos.push({
+            id: `${metaId}:${sNum}:${ep.episode_number}`,
+            title: ep.name || `Episode ${ep.episode_number}`,
+            season: sNum,
+            episode: ep.episode_number,
+            released: ep.air_date ? `${ep.air_date}T00:00:00.000Z` : undefined,
+            thumbnail: ep.still_path ? `https://image.tmdb.org/t/p/w300${ep.still_path}` : undefined,
+            overview: ep.overview
+          });
+        }
+      }
+      meta.videos = videos;
+    }
+    return json({ meta }, { cache: CACHE.meta });
+  }
+
   if (!isItemId(id)) return json({ meta: null }, { cache: CACHE.meta });
   const { ref } = decodeItemId(id);
   if (!ref) return json({ meta: null }, { cache: CACHE.meta });
