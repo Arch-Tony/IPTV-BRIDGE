@@ -5,7 +5,7 @@ import { validateConfig } from './config';
 import { cleanTitle, titleIdentity } from './cleaner';
 import { decodeItemId, encodeItemId, isItemId } from './id';
 import { getItems, getTitleMatches } from './provider';
-import { itemsToStreams, rankMatches } from './matcher';
+import { itemsToStreams, matchScore, rankMatches } from './matcher';
 import { TMDBClient } from './tmdb';
 import { XtreamClient } from './xtream';
 import { CACHE, json } from './responses';
@@ -419,8 +419,11 @@ async function resolveGlobalStreams(
   if (config.type === 'xtream' && season !== undefined && episode !== undefined) {
     const client = new XtreamClient(config.host!, config.username!, config.password!);
     const out: StremioStream[] = [];
+    const tried = new Set<string>();
+
     for (const m of matches.slice(0, 3)) {
       if (m.item.streamId === undefined) continue;
+      tried.add(String(m.item.streamId));
       const eps = await client.getEpisodeStreams(m.item.streamId, season, episode);
       for (const e of eps) {
         out.push({
@@ -432,7 +435,43 @@ async function resolveGlobalStreams(
       }
       if (out.length) break;
     }
-    return out;
+
+    if (out.length) return out;
+
+    // Some providers use a slightly different series label than TMDb/Cinemeta
+    // (localized title, punctuation, subtitle, provider suffix, etc.). The
+    // normal matcher intentionally requires an exact title identity, which is
+    // safe but can miss those entries. As a series-only fallback, try a small
+    // set of high-confidence fuzzy matches and confirm the requested episode
+    // actually exists before returning a stream.
+    const loose = available
+      .filter((item) => item.streamId !== undefined && !tried.has(String(item.streamId)))
+      .filter((item) => {
+        if (targetTmdbId && item.tmdbId && String(item.tmdbId) !== targetTmdbId) return false;
+        if (year && item.year && Math.abs(item.year - year) > 2) return false;
+        return true;
+      })
+      .map((item) => ({
+        item,
+        score: Math.max(...titles.map((title) => matchScore(title, item.title, year)))
+      }))
+      .filter((m) => m.score >= 0.78)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
+
+    for (const m of loose) {
+      if (m.item.streamId === undefined) continue;
+      const eps = await client.getEpisodeStreams(m.item.streamId, season, episode);
+      if (!eps.length) continue;
+      return eps.map((e) => ({
+        name: `IPTV${e.quality ? ' ' + e.quality : ''}`,
+        title: `${m.item.title} \u2022 S${season}E${episode}`,
+        url: e.url,
+        quality: e.quality
+      }));
+    }
+
+    return [];
   }
 
   return [];
