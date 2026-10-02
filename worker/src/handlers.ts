@@ -211,6 +211,43 @@ export async function handleMeta(
   const fallbackPoster = `${baseUrl}/logo.png`;
   const tmdb = tmdbFor(config, env, ctx);
 
+  // Nuvio asks an addon for metadata before opening detail pages. Our catalog
+  // uses Cinemeta-compatible IMDb ids (tt...) so Sipario can render rich cards,
+  // therefore serve metadata for those same IMDb ids as well. This is metadata-
+  // only: stream resolution remains untouched.
+  if (/^tt\d+$/.test(id)) {
+    const found = await tmdb.getByImdbId(id);
+    if (!found?.details?.id) return json({ meta: null }, { cache: CACHE.meta });
+
+    const full = await tmdb.getByTmdbId(found.details.id, found.type);
+    if (!full) return json({ meta: null }, { cache: CACHE.meta });
+
+    const meta = tmdb.formatToStremioMeta(full, found.type, id);
+    if (found.type === 'series') {
+      const seasons: number[] = (full.seasons || [])
+        .map((s: any) => s.season_number)
+        .filter((n: number) => n && n > 0);
+      const videos: NonNullable<StremioMeta['videos']> = [];
+      for (const sNum of seasons.slice(0, 30)) {
+        const eps = await tmdb.getSeasonEpisodes(full.id, sNum);
+        for (const ep of eps) {
+          videos.push({
+            id: `${id}:${sNum}:${ep.episode_number}`,
+            title: ep.name || `Episode ${ep.episode_number}`,
+            season: sNum,
+            episode: ep.episode_number,
+            released: ep.air_date ? `${ep.air_date}T00:00:00.000Z` : undefined,
+            thumbnail: ep.still_path ? `https://image.tmdb.org/t/p/w300${ep.still_path}` : undefined,
+            overview: ep.overview
+          });
+        }
+      }
+      meta.videos = videos;
+    }
+
+    return json({ meta }, { cache: CACHE.meta });
+  }
+
   // Catalog cards may use TMDb ids. Serve full metadata for those ids so
   // Sipario can render a real detail page instead of only resolving streams.
   if (id.startsWith('tmdb:')) {
