@@ -86,9 +86,9 @@ export function edgePut<T>(ctx: ExecutionContext, key: string, value: T, ttlSec:
 
 export const TTL = {
   CATEGORIES: 6 * 60 * 60, // 6h
-  STREAMS: 5 * 60, // 5m — keep Sipario novelty rows close to the provider
+  STREAMS: 5 * 60, // 5m — keep Nuvio novelty rows close to the provider
   PLAYLIST: 3 * 60 * 60, // 3h
   EPISODES: 60 * 60, // 1h
   TMDB: 24 * 60 * 60, // 24h
-  CATALOG_MAP: 60 * 60 // 1h — exact source behind IMDb cards from our own catalog
+  CATALOG_MAP: 60 * 60 // 1h — exact selected-provider source behind canonical IMDb cards
 };

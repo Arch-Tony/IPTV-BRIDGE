@@ -72,10 +72,13 @@ function normalizeConfig(value: any): UserConfig {
 
 /** Stable short fingerprint of the provider identity, for per-user cache keys. */
 export function configFingerprint(config: UserConfig): string {
-  const raw =
+  const provider =
     config.type === 'xtream'
       ? `xt|${config.host}|${config.username}|${config.password}`
       : `m3u|${config.m3uUrl}`;
+  const categories = [...(config.includedCategories || [])].map(String).sort().join(',');
+  const raw =
+    `${provider}|categories:${categories}|live:${config.includeLive !== false}|movies:${config.includeMovies !== false}|series:${config.includeSeries !== false}`;
   // FNV-1a 32-bit (sync, dependency-free); collisions are irrelevant for a cache key.
   let h = 0x811c9dc5;
   for (let i = 0; i < raw.length; i++) {
