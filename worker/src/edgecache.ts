@@ -62,10 +62,33 @@ export async function edgeCached<T>(
   return promise;
 }
 
+/** Read a JSON value from the edge cache without creating a fallback entry. */
+export async function edgeGet<T>(key: string): Promise<T | undefined> {
+  const hit = await caches.default.match(keyToRequest(key));
+  if (!hit) return undefined;
+  try {
+    return (await hit.json()) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Store a JSON value in the edge cache. */
+export function edgePut<T>(ctx: ExecutionContext, key: string, value: T, ttlSec: number): void {
+  const res = new Response(JSON.stringify(value), {
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': `public, max-age=${ttlSec}`
+    }
+  });
+  ctx.waitUntil(caches.default.put(keyToRequest(key), res));
+}
+
 export const TTL = {
   CATEGORIES: 6 * 60 * 60, // 6h
   STREAMS: 5 * 60, // 5m — keep Sipario novelty rows close to the provider
   PLAYLIST: 3 * 60 * 60, // 3h
   EPISODES: 60 * 60, // 1h
-  TMDB: 24 * 60 * 60 // 24h
+  TMDB: 24 * 60 * 60, // 24h
+  CATALOG_MAP: 60 * 60 // 1h — exact source behind IMDb cards from our own catalog
 };
