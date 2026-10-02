@@ -151,7 +151,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     return json({ ok: false, error: 'Unknown API route.' }, { status: 404 });
   }
 
-  if (head === 'health') return json({ ok: true, version: '2.9.0-frrecent' }, { cache: 'no-store' });
+  if (head === 'health') return json({ ok: true, version: '2.10.0-frrecent-fast' }, { cache: 'no-store' });
 
   // Everything else -> static configurator/landing assets.
   return assetResponse(env, request);
