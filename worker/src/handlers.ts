@@ -1,15 +1,14 @@
 // Stremio/Nuvio addon protocol handlers (per-user config). Ported from the Node
 // addon: provider data is edge-cached per user, TMDB is edge-cached globally.
 
-import { configFingerprint, validateConfig } from './config';
-import { cleanTitle, titleIdentity } from './cleaner';
+import { validateConfig } from './config';
+import { cleanTitle } from './cleaner';
 import { decodeItemId, encodeItemId, isItemId } from './id';
 import { getItems, getTitleMatches } from './provider';
 import { itemsToStreams, rankMatches } from './matcher';
 import { TMDBClient } from './tmdb';
 import { XtreamClient } from './xtream';
 import { CACHE, json } from './responses';
-import { edgeGet, edgePut, TTL } from './edgecache';
 import { isSafeProtocolId } from './security';
 import { Env, MediaKind, StremioMeta, StremioStream, UserConfig } from './types';
 
@@ -21,77 +20,6 @@ function typeToKind(type: string): MediaKind {
 
 function tmdbFor(config: UserConfig, env: Env, ctx: ExecutionContext): TMDBClient {
   return new TMDBClient(config.tmdbApiKey || env.TMDB_FALLBACK_KEY, ctx);
-}
-
-const CATALOG_PAGE_SIZE = 20;
-
-interface CatalogSourceRef {
-  streamId: string | number;
-  title: string;
-  containerExtension?: string;
-  category?: string;
-  tmdbId?: string;
-}
-
-function catalogSourceKey(config: UserConfig, kind: 'movie' | 'series', externalId: string): string {
-  return `catalog-source:${configFingerprint(config)}:${kind}:${externalId}`;
-}
-
-function rememberCatalogSources(
-  config: UserConfig,
-  kind: 'movie' | 'series',
-  externalId: string,
-  refs: CatalogSourceRef[],
-  ctx: ExecutionContext
-): void {
-  if (!refs.length) return;
-  edgePut(ctx, catalogSourceKey(config, kind, externalId), refs, TTL.CATALOG_MAP);
-}
-
-async function getRememberedCatalogSources(
-  config: UserConfig,
-  kind: 'movie' | 'series',
-  externalId: string
-): Promise<CatalogSourceRef[]> {
-  return (await edgeGet<CatalogSourceRef[]>(catalogSourceKey(config, kind, externalId))) || [];
-}
-
-async function resolveCatalogImdbId(
-  item: Awaited<ReturnType<typeof getItems>>[number],
-  kind: 'movie' | 'series',
-  tmdb: TMDBClient
-): Promise<string | undefined> {
-  const clean = cleanTitle(item.title).cleanTitle || item.title;
-
-  let full: any | null = null;
-  if (item.tmdbId && /^\d+$/.test(item.tmdbId)) {
-    full = await tmdb.getByTmdbId(item.tmdbId, kind);
-  } else {
-    const found = await tmdb.bestSearchMatch(clean, kind, item.year);
-    if (!found?.id) return undefined;
-
-    const sourceIdentity = titleIdentity(clean);
-    const candidateTitles =
-      kind === 'movie'
-        ? [found.title, found.original_title]
-        : [found.name, found.original_name];
-    const titleMatches = candidateTitles
-      .filter(Boolean)
-      .some((title: unknown) => titleIdentity(String(title)) === sourceIdentity);
-
-    const releaseDate = kind === 'movie' ? found.release_date : found.first_air_date;
-    const resultYear = releaseDate ? parseInt(String(releaseDate).slice(0, 4), 10) : undefined;
-    if (item.year && resultYear) {
-      if (Math.abs(resultYear - item.year) > 1) return undefined;
-    } else if (!titleMatches) {
-      return undefined;
-    }
-
-    full = await tmdb.getByTmdbId(found.id, kind);
-  }
-
-  const imdbId = full?.external_ids?.imdb_id;
-  return typeof imdbId === 'string' && /^tt\d+$/.test(imdbId) ? imdbId : undefined;
 }
 
 export interface CatalogParams {
@@ -136,56 +64,23 @@ export async function handleCatalog(
   let items = await getItems(config, kind, ctx);
   if (genre) items = items.filter((i) => i.category === genre);
 
-  // Sipario home rows should surface the provider's newest additions first.
-  // Movies generally expose `added`; series commonly expose `last_modified`
-  // when a new episode arrives, with `added` as a fallback.
+  // Nuvio home rows: newest provider additions first.
+  // Series use last_modified when available so a new episode can surface the show.
   if (kind === 'movie' || kind === 'series') {
     const recentTs = (item: (typeof items)[number]): number =>
       kind === 'series' ? item.updatedAt ?? item.addedAt ?? 0 : item.addedAt ?? item.updatedAt ?? 0;
     items = [...items].sort((a, b) => recentTs(b) - recentTs(a));
   }
+
   if (search) {
     const q = search.toLowerCase();
     items = items.filter((i) => i.title.toLowerCase().includes(q) || i.cleanTitle.toLowerCase().includes(q));
   }
 
-  // Keep each catalog page below the Worker/TMDb subrequest budget. Sipario can
-  // request further pages through `skip`, while the home row stays fast.
-  const page = items.slice(skip, skip + CATALOG_PAGE_SIZE);
-  let catalogIds: Array<string | undefined> = page.map(() => undefined);
-  if (kind === 'movie' || kind === 'series') {
-    const tmdb = tmdbFor(config, env, ctx);
-    catalogIds = await Promise.all(page.map((item) => resolveCatalogImdbId(item, kind, tmdb)));
-  }
-
-  // Keep the exact Xtream source behind each IMDb card from our own catalog.
-  // This allows the stream endpoint to answer immediately when the user opens
-  // one of our "Nouveautés" cards, without repeating TMDb + title matching.
-  if (kind === 'movie' || kind === 'series') {
-    const grouped = new Map<string, CatalogSourceRef[]>();
-    page.forEach((item, index) => {
-      const externalId = catalogIds[index];
-      if (!externalId || !externalId.startsWith('tt') || item.streamId === undefined) return;
-      const list = grouped.get(externalId) || [];
-      list.push({
-        streamId: item.streamId,
-        title: item.title,
-        containerExtension: item.containerExtension,
-        category: item.category,
-        tmdbId: item.tmdbId
-      });
-      grouped.set(externalId, list);
-    });
-    for (const [externalId, refs] of grouped) {
-      rememberCatalogSources(config, kind, externalId, refs, ctx);
-    }
-  }
-
-  const metas = page.map((item, index) => ({
-    // Cinemeta-compatible IMDb ids let Sipario route the card through its
-    // normal rich movie/series detail flow. If matching is uncertain, retain
-    // the IPTV id rather than risk opening the wrong title.
-    id: catalogIds[index] || encodeItemId(item),
+  const pageSize = search ? 100 : 20;
+  const page = items.slice(skip, skip + pageSize);
+  const metas = page.map((item) => ({
+    id: encodeItemId(item),
     type: params.type,
     name: cleanTitle(item.title).cleanTitle || item.title,
     poster: item.logo || fallbackPoster,
@@ -210,79 +105,6 @@ export async function handleMeta(
   if (!isSafeProtocolId(id) || validateConfig(config)) return json({ meta: null }, { cache: CACHE.meta });
   const fallbackPoster = `${baseUrl}/logo.png`;
   const tmdb = tmdbFor(config, env, ctx);
-
-  // Nuvio asks an addon for metadata before opening detail pages. Our catalog
-  // uses Cinemeta-compatible IMDb ids (tt...) so Sipario can render rich cards,
-  // therefore serve metadata for those same IMDb ids as well. This is metadata-
-  // only: stream resolution remains untouched.
-  if (/^tt\d+$/.test(id)) {
-    const found = await tmdb.getByImdbId(id);
-    if (!found?.details?.id) return json({ meta: null }, { cache: CACHE.meta });
-
-    const full = await tmdb.getByTmdbId(found.details.id, found.type);
-    if (!full) return json({ meta: null }, { cache: CACHE.meta });
-
-    const meta = tmdb.formatToStremioMeta(full, found.type, id);
-    if (found.type === 'series') {
-      const seasons: number[] = (full.seasons || [])
-        .map((s: any) => s.season_number)
-        .filter((n: number) => n && n > 0);
-      const videos: NonNullable<StremioMeta['videos']> = [];
-      for (const sNum of seasons.slice(0, 30)) {
-        const eps = await tmdb.getSeasonEpisodes(full.id, sNum);
-        for (const ep of eps) {
-          videos.push({
-            id: `${id}:${sNum}:${ep.episode_number}`,
-            title: ep.name || `Episode ${ep.episode_number}`,
-            season: sNum,
-            episode: ep.episode_number,
-            released: ep.air_date ? `${ep.air_date}T00:00:00.000Z` : undefined,
-            thumbnail: ep.still_path ? `https://image.tmdb.org/t/p/w300${ep.still_path}` : undefined,
-            overview: ep.overview
-          });
-        }
-      }
-      meta.videos = videos;
-    }
-
-    return json({ meta }, { cache: CACHE.meta });
-  }
-
-  // Catalog cards may use TMDb ids. Serve full metadata for those ids so
-  // Sipario can render a real detail page instead of only resolving streams.
-  if (id.startsWith('tmdb:')) {
-    const tmdbId = id.split(':')[1];
-    if (!/^\d+$/.test(tmdbId || '')) return json({ meta: null }, { cache: CACHE.meta });
-
-    const tmdbType = type === 'series' ? 'series' : 'movie';
-    const metaId = `tmdb:${tmdbId}`;
-    const full = await tmdb.getByTmdbId(tmdbId, tmdbType);
-    if (!full) return json({ meta: null }, { cache: CACHE.meta });
-
-    const meta = tmdb.formatToStremioMeta(full, tmdbType, metaId);
-    if (tmdbType === 'series') {
-      const seasons: number[] = (full.seasons || [])
-        .map((s: any) => s.season_number)
-        .filter((n: number) => n && n > 0);
-      const videos: NonNullable<StremioMeta['videos']> = [];
-      for (const sNum of seasons.slice(0, 20)) {
-        const eps = await tmdb.getSeasonEpisodes(full.id, sNum);
-        for (const ep of eps) {
-          videos.push({
-            id: `${metaId}:${sNum}:${ep.episode_number}`,
-            title: ep.name || `Episode ${ep.episode_number}`,
-            season: sNum,
-            episode: ep.episode_number,
-            released: ep.air_date ? `${ep.air_date}T00:00:00.000Z` : undefined,
-            thumbnail: ep.still_path ? `https://image.tmdb.org/t/p/w300${ep.still_path}` : undefined,
-            overview: ep.overview
-          });
-        }
-      }
-      meta.videos = videos;
-    }
-    return json({ meta }, { cache: CACHE.meta });
-  }
 
   if (!isItemId(id)) return json({ meta: null }, { cache: CACHE.meta });
   const { ref } = decodeItemId(id);
@@ -422,51 +244,9 @@ async function resolveGlobalStreams(
   }
 
   const isSeries = type === 'series' || season !== undefined;
+  const tmdb = tmdbFor(config, env, ctx);
   const kind: MediaKind = isSeries ? 'series' : 'movie';
 
-  // Fast path for cards opened from our own "Nouveautés" catalogs. The catalog
-  // already resolved the IMDb id from a precise Xtream item, so reuse that
-  // source directly instead of doing another TMDb lookup + provider-wide match.
-  //
-  // Movies can return the stored Xtream VOD URL immediately. Series keep the
-  // stable episode resolver: we only skip the expensive title/TMDb matching
-  // and call getEpisodeStreams() with the exact remembered Xtream series id.
-  // If that exact series lookup yields no episode, fall through unchanged to
-  // the known-good 2.9 matching logic below.
-  if (config.type === 'xtream' && baseId.startsWith('tt')) {
-    const remembered = await getRememberedCatalogSources(
-      config,
-      isSeries ? 'series' : 'movie',
-      baseId
-    );
-
-    if (remembered.length) {
-      const client = new XtreamClient(config.host!, config.username!, config.password!);
-
-      if (!isSeries) {
-        return remembered.map((ref) => ({
-          name: 'IPTV',
-          title: `${ref.title}${ref.category ? ` • ${ref.category}` : ''}`,
-          url: client.movieUrl(ref.streamId, ref.containerExtension || 'mp4')
-        }));
-      }
-
-      if (season !== undefined && episode !== undefined) {
-        for (const ref of remembered) {
-          const eps = await client.getEpisodeStreams(ref.streamId, season, episode);
-          if (!eps.length) continue;
-          return eps.map((e) => ({
-            name: `IPTV${e.quality ? ' ' + e.quality : ''}`,
-            title: `${ref.title} • S${season}E${episode}`,
-            url: e.url,
-            quality: e.quality
-          }));
-        }
-      }
-    }
-  }
-
-  const tmdb = tmdbFor(config, env, ctx);
   const availablePromise = getItems(config, kind, ctx);
 
   let titles: string[] = [];
@@ -476,8 +256,9 @@ async function resolveGlobalStreams(
   if (baseId.startsWith('tt')) {
     const found = await tmdb.getByImdbId(baseId);
     if (found) {
-      // The /find response is intentionally light. Fetch the full TMDb object
-      // so matching can also use localized and alternative titles.
+      // Never cross movie/series boundaries. Nuvio already tells us the type.
+      if ((isSeries && found.type !== 'series') || (!isSeries && found.type !== 'movie')) return [];
+
       const full = found.details?.id ? await tmdb.getByTmdbId(found.details.id, found.type) : null;
       const src = full || found.details;
       targetTmdbId = src?.id !== undefined ? String(src.id) : undefined;
@@ -504,8 +285,7 @@ async function resolveGlobalStreams(
 
   const available = await availablePromise;
 
-  // Strongest possible match: some Xtream providers expose the TMDb id on
-  // their VOD/series entries. Prefer that over any title comparison.
+  // Strongest match first when the provider exposes a TMDb id.
   const directTmdbMatches = targetTmdbId
     ? available.filter((item) => item.tmdbId && String(item.tmdbId) === targetTmdbId)
     : [];
@@ -544,7 +324,7 @@ async function resolveGlobalStreams(
     altTitles: titles.slice(1),
     targetSeason: config.type === 'm3u' ? season : undefined,
     targetEpisode: config.type === 'm3u' ? episode : undefined,
-    minScore: 0.62
+    minScore: 0.78
   });
   if (!matches.length) return [];
 
