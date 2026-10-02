@@ -161,7 +161,7 @@ export async function handleCatalog(
   // Keep the exact Xtream source behind each IMDb card from our own catalog.
   // This allows the stream endpoint to answer immediately when the user opens
   // one of our "Nouveautés" cards, without repeating TMDb + title matching.
-  if (kind === 'movie') {
+  if (kind === 'movie' || kind === 'series') {
     const grouped = new Map<string, CatalogSourceRef[]>();
     page.forEach((item, index) => {
       const externalId = catalogIds[index];
@@ -390,15 +390,42 @@ async function resolveGlobalStreams(
   // Fast path for cards opened from our own "Nouveautés" catalogs. The catalog
   // already resolved the IMDb id from a precise Xtream item, so reuse that
   // source directly instead of doing another TMDb lookup + provider-wide match.
-  if (config.type === 'xtream' && !isSeries && baseId.startsWith('tt')) {
-    const remembered = await getRememberedCatalogSources(config, 'movie', baseId);
+  //
+  // Movies can return the stored Xtream VOD URL immediately. Series keep the
+  // stable episode resolver: we only skip the expensive title/TMDb matching
+  // and call getEpisodeStreams() with the exact remembered Xtream series id.
+  // If that exact series lookup yields no episode, fall through unchanged to
+  // the known-good 2.9 matching logic below.
+  if (config.type === 'xtream' && baseId.startsWith('tt')) {
+    const remembered = await getRememberedCatalogSources(
+      config,
+      isSeries ? 'series' : 'movie',
+      baseId
+    );
+
     if (remembered.length) {
       const client = new XtreamClient(config.host!, config.username!, config.password!);
-      return remembered.map((ref) => ({
-        name: 'IPTV',
-        title: `${ref.title}${ref.category ? ` • ${ref.category}` : ''}`,
-        url: client.movieUrl(ref.streamId, ref.containerExtension || 'mp4')
-      }));
+
+      if (!isSeries) {
+        return remembered.map((ref) => ({
+          name: 'IPTV',
+          title: `${ref.title}${ref.category ? ` • ${ref.category}` : ''}`,
+          url: client.movieUrl(ref.streamId, ref.containerExtension || 'mp4')
+        }));
+      }
+
+      if (season !== undefined && episode !== undefined) {
+        for (const ref of remembered) {
+          const eps = await client.getEpisodeStreams(ref.streamId, season, episode);
+          if (!eps.length) continue;
+          return eps.map((e) => ({
+            name: `IPTV${e.quality ? ' ' + e.quality : ''}`,
+            title: `${ref.title} • S${season}E${episode}`,
+            url: e.url,
+            quality: e.quality
+          }));
+        }
+      }
     }
   }
 
