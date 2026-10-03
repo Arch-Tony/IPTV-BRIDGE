@@ -111,12 +111,10 @@ export class TMDBClient {
       return qualityScore(b) - qualityScore(a);
     });
 
-    let logoAsset = sortedLogos[0];
-    if (logoAsset && sortedLogos.length === 1) {
-      const voteAverage = Number(logoAsset.vote_average || 0);
-      const voteCount = Number(logoAsset.vote_count || 0);
-      if (voteAverage <= 0 && voteCount <= 0) logoAsset = undefined;
-    }
+    // Always keep the best available candidate. Nuvio may intentionally hide
+    // the hero text while external metadata enrichment is pending, so dropping
+    // a weak-but-valid logo can leave the hero looking completely empty.
+    const logoAsset = sortedLogos[0];
 
     const logo = logoAsset?.file_path
       ? `https://image.tmdb.org/t/p/w500${logoAsset.file_path}`
