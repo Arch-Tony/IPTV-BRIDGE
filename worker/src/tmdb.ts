@@ -123,17 +123,27 @@ export class TMDBClient {
     const endpoint = type === 'movie' ? 'movie' : 'tv';
     const lang = typeof originalLanguage === 'string' ? originalLanguage.trim().toLowerCase() : '';
 
-    // TMDB's main catalog-card request deliberately asks only for fr/en/null.
-    // If none exists, try the title's original language before giving up.
-    if (lang && lang !== 'fr' && lang !== 'en') {
-      const images = await this.get(
-        `catalog-logo-original:${type}:${cleanId}:${lang}`,
-        `${BASE}/${endpoint}/${encodeURIComponent(cleanId)}/images?api_key=${this.apiKey}&include_image_language=${encodeURIComponent(lang)}`
-      );
-      const originalLogo = this.bestLogo(images?.logos || [], [lang]);
-      if (originalLogo?.file_path) {
-        return `https://image.tmdb.org/t/p/w500${originalLogo.file_path}`;
-      }
+    // When the appended details payload has no clearlogo, query TMDB's
+    // dedicated /images endpoint (the same shape AIO Metadata relies on).
+    // This catches titles whose logos are missing from the appended payload.
+    const requestedLanguages = ['fr', 'en', 'null'];
+    if (lang && lang !== 'fr' && lang !== 'en') requestedLanguages.push(lang);
+
+    const images = await this.get(
+      `catalog-logo-images-v2:${type}:${cleanId}:${requestedLanguages.join(',')}`,
+      `${BASE}/${endpoint}/${encodeURIComponent(cleanId)}/images?api_key=${this.apiKey}&include_image_language=${encodeURIComponent(requestedLanguages.join(','))}`
+    );
+
+    const logos = Array.isArray(images?.logos) ? images.logos : [];
+    const logoAsset =
+      logos.find((img: any) => img?.file_path && img.iso_639_1 === 'fr') ||
+      logos.find((img: any) => img?.file_path && img.iso_639_1 === 'en') ||
+      logos.find((img: any) => img?.file_path && img.iso_639_1 == null) ||
+      (lang ? logos.find((img: any) => img?.file_path && img.iso_639_1 === lang) : undefined) ||
+      logos.find((img: any) => img?.file_path);
+
+    if (logoAsset?.file_path) {
+      return `https://image.tmdb.org/t/p/w500${logoAsset.file_path}`;
     }
 
     // Last-resort artwork fallback matching AIO Metadata's behaviour: only use
