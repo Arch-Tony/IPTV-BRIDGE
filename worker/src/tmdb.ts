@@ -68,59 +68,90 @@ export class TMDBClient {
     );
   }
 
+  private logoQualityScore(img: any): number {
+    const voteAverage = Number(img?.vote_average || 0);
+    const voteCount = Number(img?.vote_count || 0);
+    const width = Number(img?.width || 0);
+    return voteAverage * 10 + Math.min(voteCount, 20) + Math.min(width / 250, 8);
+  }
+
+  private bestLogo(logos: any[], preferredLanguages: Array<string | null>): any | undefined {
+    const valid = (Array.isArray(logos) ? logos : []).filter((img: any) => !!img?.file_path);
+    if (!valid.length) return undefined;
+
+    const rank = (img: any): number => {
+      const lang = img?.iso_639_1 ?? null;
+      const idx = preferredLanguages.findIndex((preferred) => preferred === lang);
+      return idx >= 0 ? preferredLanguages.length - idx : 0;
+    };
+
+    return [...valid].sort((a: any, b: any) => {
+      const langDiff = rank(b) - rank(a);
+      if (langDiff !== 0) return langDiff;
+      return this.logoQualityScore(b) - this.logoQualityScore(a);
+    })[0];
+  }
+
   catalogArtwork(tmdbData: any): { background?: string; logo?: string } {
     const background = tmdbData?.backdrop_path
       ? `https://image.tmdb.org/t/p/w1280${tmdbData.backdrop_path}`
       : undefined;
 
-    const logos = (Array.isArray(tmdbData?.images?.logos) ? tmdbData.images.logos : [])
-      .filter((img: any) => {
-        if (!img?.file_path) return false;
-        const width = Number(img.width || 0);
-        const height = Number(img.height || 0);
-        if (width > 0 && width < 300) return false;
-        if (height > 0 && height < 80) return false;
-        if (width > 0 && height > 0) {
-          const ratio = width / height;
-          if (ratio < 1.15 || ratio > 9) return false;
-        }
-        return true;
-      });
-
-    const langRank = (img: any): number => {
-      const lang = img?.iso_639_1;
-      if (lang === 'fr') return 4;
-      if (lang === 'en') return 3;
-      if (lang == null) return 2;
-      return 1;
-    };
-    const qualityScore = (img: any): number => {
-      const voteAverage = Number(img?.vote_average || 0);
-      const voteCount = Number(img?.vote_count || 0);
-      const width = Number(img?.width || 0);
-      return voteAverage * 10 + Math.min(voteCount, 20) + Math.min(width / 250, 8);
-    };
-
-    // Do not blindly take the first TMDB logo. Keep French first, then English,
-    // but choose the strongest community-rated/resolution candidate inside the
-    // best available language bucket. If the only candidate is a very weak,
-    // unvoted asset, omit it and let Nuvio fall back to readable title text.
-    const sortedLogos = [...logos].sort((a: any, b: any) => {
-      const langDiff = langRank(b) - langRank(a);
-      if (langDiff !== 0) return langDiff;
-      return qualityScore(b) - qualityScore(a);
-    });
-
-    // Always keep the best available candidate. Nuvio may intentionally hide
-    // the hero text while external metadata enrichment is pending, so dropping
-    // a weak-but-valid logo can leave the hero looking completely empty.
-    const logoAsset = sortedLogos[0];
-
+    // Do not reject valid TMDB clearlogos just because their dimensions or
+    // aspect ratio look unusual. Nuvio scales them with ContentScale.Fit.
+    // Prefer French, then English, then language-neutral artwork.
+    const logoAsset = this.bestLogo(tmdbData?.images?.logos || [], ['fr', 'en', null]);
     const logo = logoAsset?.file_path
       ? `https://image.tmdb.org/t/p/w500${logoAsset.file_path}`
       : undefined;
 
     return { background, logo };
+  }
+
+  async catalogLogoFallback(
+    tmdbId: number | string,
+    type: 'movie' | 'series',
+    originalLanguage?: string,
+    imdbId?: string
+  ): Promise<string | undefined> {
+    const cleanId = String(tmdbId).replace(/^tmdb:/, '');
+    const endpoint = type === 'movie' ? 'movie' : 'tv';
+    const lang = typeof originalLanguage === 'string' ? originalLanguage.trim().toLowerCase() : '';
+
+    // TMDB's main catalog-card request deliberately asks only for fr/en/null.
+    // If none exists, try the title's original language before giving up.
+    if (lang && lang !== 'fr' && lang !== 'en') {
+      const images = await this.get(
+        `catalog-logo-original:${type}:${cleanId}:${lang}`,
+        `${BASE}/${endpoint}/${encodeURIComponent(cleanId)}/images?api_key=${this.apiKey}&include_image_language=${encodeURIComponent(lang)}`
+      );
+      const originalLogo = this.bestLogo(images?.logos || [], [lang]);
+      if (originalLogo?.file_path) {
+        return `https://image.tmdb.org/t/p/w500${originalLogo.file_path}`;
+      }
+    }
+
+    // Last-resort artwork fallback matching AIO Metadata's behaviour: only use
+    // Metahub when the canonical IMDb logo endpoint actually exists.
+    if (imdbId && /^tt\d+$/.test(imdbId)) {
+      const metahubUrl = `https://images.metahub.space/logo/medium/${imdbId}/img`;
+      const exists = await edgeCached(
+        this.ctx,
+        `metahub-logo-exists:${imdbId}`,
+        TTL.TMDB,
+        async () => {
+          try {
+            const res = await fetch(metahubUrl, { method: 'HEAD', redirect: 'follow' });
+            return res.ok;
+          } catch {
+            return false;
+          }
+        }
+      );
+      if (exists) return metahubUrl;
+    }
+
+    return undefined;
   }
 
   collectTitles(tmdbData: any, type: 'movie' | 'series'): string[] {

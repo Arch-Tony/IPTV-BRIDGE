@@ -106,11 +106,19 @@ async function resolveCatalogCard(
       ? imdbId
       : undefined;
   const artwork = tmdb.catalogArtwork(full);
+  const logo =
+    artwork.logo ||
+    (await tmdb.catalogLogoFallback(
+      full.id,
+      kind,
+      typeof full.original_language === 'string' ? full.original_language : undefined,
+      externalId
+    ));
 
   return {
     externalId,
     background: artwork.background,
-    logo: artwork.logo,
+    logo,
     status: typeof full.status === 'string' ? full.status : undefined,
     lastAirDate: typeof full.last_air_date === 'string' ? full.last_air_date : undefined
   };
