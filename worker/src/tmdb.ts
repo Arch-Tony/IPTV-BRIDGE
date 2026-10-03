@@ -97,10 +97,15 @@ export class TMDBClient {
       ? `https://image.tmdb.org/t/p/w1280${tmdbData.backdrop_path}`
       : undefined;
 
-    // Do not reject valid TMDB clearlogos just because their dimensions or
-    // aspect ratio look unusual. Nuvio scales them with ContentScale.Fit.
-    // Prefer French, then English, then language-neutral artwork.
-    const logoAsset = this.bestLogo(tmdbData?.images?.logos || [], ['fr', 'en', null]);
+    // Known-good 3.1.1 behaviour: take the first TMDB clearlogo in strict
+    // language order. Do not rank, filter or second-guess TMDB here.
+    const logos = Array.isArray(tmdbData?.images?.logos) ? tmdbData.images.logos : [];
+    const logoAsset =
+      logos.find((img: any) => img?.file_path && img.iso_639_1 === 'fr') ||
+      logos.find((img: any) => img?.file_path && img.iso_639_1 === 'en') ||
+      logos.find((img: any) => img?.file_path && img.iso_639_1 == null) ||
+      logos.find((img: any) => img?.file_path);
+
     const logo = logoAsset?.file_path
       ? `https://image.tmdb.org/t/p/w500${logoAsset.file_path}`
       : undefined;
