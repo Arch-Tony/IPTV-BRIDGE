@@ -68,7 +68,7 @@ export function cleanTitle(rawTitle: string): CleanedTitle {
 
   // Standalone language/provider tags.
   cleaned = cleaned.replace(
-    /\b(?:EN|ENG|English|FR|FRE|French|ES|SPA|Spanish|DE|GER|German|IT|ITA|Italian|PT|POR|Portuguese|HI|HIN|Hindi|AR|ARA|Arabic|TR|TUR|Turkish)\b/gi,
+    /\b(?:EN|ENG|English|FR|FRE|French|VF|VFF|VFQ|VOSTFR|TRUEFRENCH|ES|SPA|Spanish|DE|GER|German|IT|ITA|Italian|PT|POR|Portuguese|HI|HIN|Hindi|AR|ARA|Arabic|TR|TUR|Turkish)\b/gi,
     ''
   );
 

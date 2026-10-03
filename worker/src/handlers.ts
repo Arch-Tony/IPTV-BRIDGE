@@ -60,6 +60,8 @@ interface CatalogCardResolution {
   externalId?: string;
   background?: string;
   logo?: string;
+  status?: string;
+  lastAirDate?: string;
 }
 
 async function resolveCatalogCard(
@@ -108,8 +110,24 @@ async function resolveCatalogCard(
   return {
     externalId,
     background: artwork.background,
-    logo: artwork.logo
+    logo: artwork.logo,
+    status: typeof full.status === 'string' ? full.status : undefined,
+    lastAirDate: typeof full.last_air_date === 'string' ? full.last_air_date : undefined
   };
+}
+
+function isStaleEndedSeries(card: CatalogCardResolution): boolean {
+  const status = (card.status || '').trim().toLowerCase();
+  if (!['ended', 'canceled', 'cancelled'].includes(status)) return false;
+  if (!card.lastAirDate) return false;
+
+  const lastAirMs = Date.parse(card.lastAirDate);
+  if (!Number.isFinite(lastAirMs)) return false;
+
+  // "Nouveautés séries" is meant to surface active/recent shows. Ignore a
+  // provider-side last_modified bump on a show that actually ended years ago.
+  const twoYearsMs = 730 * 24 * 60 * 60 * 1000;
+  return lastAirMs < Date.now() - twoYearsMs;
 }
 
 export interface CatalogParams {
@@ -170,11 +188,19 @@ export async function handleCatalog(
   // Resolve movie/series cards to a canonical IMDb id so Nuvio, AIO Metadata
   // and this IPTV catalog all refer to the same logical title and watch state.
   // Keep pages at 20: a cache miss can require up to two TMDb requests per item.
-  const page = items.slice(skip, skip + CATALOG_PAGE_SIZE);
+  let page = items.slice(skip, skip + CATALOG_PAGE_SIZE);
   let catalogCards: CatalogCardResolution[] = page.map(() => ({}));
   if (kind === 'movie' || kind === 'series') {
     const tmdb = tmdbFor(config, env, ctx);
     catalogCards = await Promise.all(page.map((item) => resolveCatalogCard(item, kind, tmdb)));
+
+    if (kind === 'series') {
+      const kept = page
+        .map((item, index) => ({ item, card: catalogCards[index] }))
+        .filter(({ card }) => !isStaleEndedSeries(card));
+      page = kept.map(({ item }) => item);
+      catalogCards = kept.map(({ card }) => card);
+    }
   }
 
   // Remember the exact selected Xtream source behind each canonical IMDb card.
