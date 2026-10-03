@@ -111,8 +111,7 @@ async function resolveCatalogCard(
     (await tmdb.catalogLogoFallback(
       full.id,
       kind,
-      typeof full.original_language === 'string' ? full.original_language : undefined,
-      externalId
+      typeof full.original_language === 'string' ? full.original_language : undefined
     ));
 
   return {

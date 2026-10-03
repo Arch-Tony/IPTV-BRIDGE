@@ -68,30 +68,6 @@ export class TMDBClient {
     );
   }
 
-  private logoQualityScore(img: any): number {
-    const voteAverage = Number(img?.vote_average || 0);
-    const voteCount = Number(img?.vote_count || 0);
-    const width = Number(img?.width || 0);
-    return voteAverage * 10 + Math.min(voteCount, 20) + Math.min(width / 250, 8);
-  }
-
-  private bestLogo(logos: any[], preferredLanguages: Array<string | null>): any | undefined {
-    const valid = (Array.isArray(logos) ? logos : []).filter((img: any) => !!img?.file_path);
-    if (!valid.length) return undefined;
-
-    const rank = (img: any): number => {
-      const lang = img?.iso_639_1 ?? null;
-      const idx = preferredLanguages.findIndex((preferred) => preferred === lang);
-      return idx >= 0 ? preferredLanguages.length - idx : 0;
-    };
-
-    return [...valid].sort((a: any, b: any) => {
-      const langDiff = rank(b) - rank(a);
-      if (langDiff !== 0) return langDiff;
-      return this.logoQualityScore(b) - this.logoQualityScore(a);
-    })[0];
-  }
-
   catalogArtwork(tmdbData: any): { background?: string; logo?: string } {
     const background = tmdbData?.backdrop_path
       ? `https://image.tmdb.org/t/p/w1280${tmdbData.backdrop_path}`
@@ -116,22 +92,18 @@ export class TMDBClient {
   async catalogLogoFallback(
     tmdbId: number | string,
     type: 'movie' | 'series',
-    originalLanguage?: string,
-    imdbId?: string
+    originalLanguage?: string
   ): Promise<string | undefined> {
     const cleanId = String(tmdbId).replace(/^tmdb:/, '');
     const endpoint = type === 'movie' ? 'movie' : 'tv';
     const lang = typeof originalLanguage === 'string' ? originalLanguage.trim().toLowerCase() : '';
 
-    // When the appended details payload has no clearlogo, query TMDB's
-    // dedicated /images endpoint (the same shape AIO Metadata relies on).
-    // This catches titles whose logos are missing from the appended payload.
-    const requestedLanguages = ['fr', 'en', 'null'];
-    if (lang && lang !== 'fr' && lang !== 'en') requestedLanguages.push(lang);
-
+    // Slow path only when the normal catalog-card payload had no clearlogo.
+    // One dedicated /images request with no language filter reveals all TMDB
+    // logo languages at once. Prefer FR -> EN -> neutral -> original -> any.
     const images = await this.get(
-      `catalog-logo-images-v2:${type}:${cleanId}:${requestedLanguages.join(',')}`,
-      `${BASE}/${endpoint}/${encodeURIComponent(cleanId)}/images?api_key=${this.apiKey}&include_image_language=${encodeURIComponent(requestedLanguages.join(','))}`
+      `catalog-logo-images-all-v3:${type}:${cleanId}`,
+      `${BASE}/${endpoint}/${encodeURIComponent(cleanId)}/images?api_key=${this.apiKey}`
     );
 
     const logos = Array.isArray(images?.logos) ? images.logos : [];
@@ -142,100 +114,9 @@ export class TMDBClient {
       (lang ? logos.find((img: any) => img?.file_path && img.iso_639_1 === lang) : undefined) ||
       logos.find((img: any) => img?.file_path);
 
-    if (logoAsset?.file_path) {
-      return `https://image.tmdb.org/t/p/w500${logoAsset.file_path}`;
-    }
-
-    // Last-resort artwork fallback matching AIO Metadata's behaviour: only use
-    // Metahub when the canonical IMDb logo endpoint actually exists.
-    if (imdbId && /^tt\d+$/.test(imdbId)) {
-      const metahubUrl = `https://images.metahub.space/logo/medium/${imdbId}/img`;
-      const exists = await edgeCached(
-        this.ctx,
-        `metahub-logo-exists:${imdbId}`,
-        TTL.TMDB,
-        async () => {
-          try {
-            const res = await fetch(metahubUrl, { method: 'HEAD', redirect: 'follow' });
-            return res.ok;
-          } catch {
-            return false;
-          }
-        }
-      );
-      if (exists) return metahubUrl;
-    }
-
-    return undefined;
-  }
-
-  async inspectArtwork(
-    tmdbId: number | string,
-    type: 'movie' | 'series',
-    imdbId?: string
-  ): Promise<any> {
-    const cleanId = String(tmdbId).replace(/^tmdb:/, '');
-    const endpoint = type === 'movie' ? 'movie' : 'tv';
-
-    // Intentionally omit language filters here: this diagnostic must reveal
-    // everything TMDB currently stores for the title, not just fr/en/null.
-    const [details, images] = await Promise.all([
-      this.get(
-        `art-diagnostic-details:${type}:${cleanId}`,
-        `${BASE}/${endpoint}/${encodeURIComponent(cleanId)}?api_key=${this.apiKey}&append_to_response=external_ids`
-      ),
-      this.get(
-        `art-diagnostic-images:${type}:${cleanId}:all-v1`,
-        `${BASE}/${endpoint}/${encodeURIComponent(cleanId)}/images?api_key=${this.apiKey}`
-      )
-    ]);
-
-    const logos = Array.isArray(images?.logos) ? images.logos : [];
-    const logoRows = logos
-      .filter((img: any) => !!img?.file_path)
-      .map((img: any) => ({
-        language: img.iso_639_1 ?? null,
-        width: img.width ?? null,
-        height: img.height ?? null,
-        voteAverage: img.vote_average ?? null,
-        voteCount: img.vote_count ?? null,
-        filePath: img.file_path,
-        url: `https://image.tmdb.org/t/p/w500${img.file_path}`
-      }));
-
-    const canonicalImdb =
-      (typeof imdbId === 'string' && /^tt\d+$/.test(imdbId) && imdbId) ||
-      (typeof details?.external_ids?.imdb_id === 'string' && /^tt\d+$/.test(details.external_ids.imdb_id)
-        ? details.external_ids.imdb_id
-        : undefined);
-
-    let metahubLogoExists = false;
-    if (canonicalImdb) {
-      const metahubUrl = `https://images.metahub.space/logo/medium/${canonicalImdb}/img`;
-      try {
-        const res = await fetch(metahubUrl, { method: 'HEAD', redirect: 'follow' });
-        metahubLogoExists = res.ok;
-      } catch {
-        metahubLogoExists = false;
-      }
-    }
-
-    return {
-      tmdbId: Number(cleanId),
-      imdbId: canonicalImdb,
-      title: type === 'movie' ? details?.title || details?.original_title : details?.name || details?.original_name,
-      originalLanguage: details?.original_language ?? null,
-      tmdb: {
-        logoCount: logoRows.length,
-        logoLanguages: [...new Set(logoRows.map((row: any) => row.language))],
-        logos: logoRows,
-        backdropCount: Array.isArray(images?.backdrops) ? images.backdrops.length : 0,
-        posterCount: Array.isArray(images?.posters) ? images.posters.length : 0
-      },
-      metahub: {
-        logoExists: metahubLogoExists
-      }
-    };
+    return logoAsset?.file_path
+      ? `https://image.tmdb.org/t/p/w500${logoAsset.file_path}`
+      : undefined;
   }
 
   collectTitles(tmdbData: any, type: 'movie' | 'series'): string[] {

@@ -10,7 +10,6 @@ import { getManifest } from './manifest';
 import { CatalogParams, handleCatalog, handleMeta, handleStream } from './handlers';
 import { CACHE, corsPreflight, json } from './responses';
 import { XtreamClient } from './xtream';
-import { TMDBClient } from './tmdb';
 import { Env } from './types';
 
 const ROUTE_KEYWORDS = new Set([
@@ -150,22 +149,10 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   if (head === 'api') {
     if (route[1] === 'test-connection' && request.method === 'POST') return testConnection(request);
 
-    if (route[1] === 'artwork-diagnostic' && request.method === 'GET') {
-      const tmdbId = url.searchParams.get('tmdbId')?.trim();
-      const type = url.searchParams.get('type') === 'series' ? 'series' : 'movie';
-      const imdbId = url.searchParams.get('imdbId')?.trim() || undefined;
-      if (!tmdbId || !/^\d+$/.test(tmdbId)) {
-        return json({ ok: false, error: 'tmdbId must be numeric.' }, { status: 400 });
-      }
-      const tmdb = new TMDBClient(env.TMDB_FALLBACK_KEY, ctx);
-      const artwork = await tmdb.inspectArtwork(tmdbId, type, imdbId);
-      return json({ ok: true, artwork }, { cache: 'no-store' });
-    }
-
     return json({ ok: false, error: 'Unknown API route.' }, { status: 404 });
   }
 
-  if (head === 'health') return json({ ok: true, version: '3.1.7-logo-images' }, { cache: 'no-store' });
+  if (head === 'health') return json({ ok: true, version: '3.1.8-logo-fast-fallback' }, { cache: 'no-store' });
 
   // Everything else -> static configurator/landing assets.
   return assetResponse(env, request);

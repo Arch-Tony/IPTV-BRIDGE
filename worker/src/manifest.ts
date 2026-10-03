@@ -54,10 +54,10 @@ export async function getManifest(config: UserConfig, baseUrl: string, ctx: Exec
 
   return {
     id: 'org.iptv.bridge.frrecent',
-    version: '3.1.7',
+    version: '3.1.8',
     name: 'IPTV Bridge · Nuvio',
     description:
-      'Nuvio-focused Xtream/M3U bridge — canonical IMDb catalog identities, stable TMDB-first preloaded logos with dedicated image fallback, selected categories, newest movies and active/recent series, and stream-only matching for external metadata IDs.',
+      'Nuvio-focused Xtream/M3U bridge — canonical IMDb catalog identities, fast TMDB-first preloaded logos with one all-language fallback, selected categories, newest movies and active/recent series, and stream-only matching for external metadata IDs.',
     logo,
     resources: [
       { name: 'catalog', types: ['tv', 'movie', 'series'] },
