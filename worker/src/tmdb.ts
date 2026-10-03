@@ -73,12 +73,50 @@ export class TMDBClient {
       ? `https://image.tmdb.org/t/p/w1280${tmdbData.backdrop_path}`
       : undefined;
 
-    const logos = Array.isArray(tmdbData?.images?.logos) ? tmdbData.images.logos : [];
-    const logoAsset =
-      logos.find((img: any) => img?.file_path && img.iso_639_1 === 'fr') ||
-      logos.find((img: any) => img?.file_path && img.iso_639_1 === 'en') ||
-      logos.find((img: any) => img?.file_path && img.iso_639_1 == null) ||
-      logos.find((img: any) => img?.file_path);
+    const logos = (Array.isArray(tmdbData?.images?.logos) ? tmdbData.images.logos : [])
+      .filter((img: any) => {
+        if (!img?.file_path) return false;
+        const width = Number(img.width || 0);
+        const height = Number(img.height || 0);
+        if (width > 0 && width < 300) return false;
+        if (height > 0 && height < 80) return false;
+        if (width > 0 && height > 0) {
+          const ratio = width / height;
+          if (ratio < 1.15 || ratio > 9) return false;
+        }
+        return true;
+      });
+
+    const langRank = (img: any): number => {
+      const lang = img?.iso_639_1;
+      if (lang === 'fr') return 4;
+      if (lang === 'en') return 3;
+      if (lang == null) return 2;
+      return 1;
+    };
+    const qualityScore = (img: any): number => {
+      const voteAverage = Number(img?.vote_average || 0);
+      const voteCount = Number(img?.vote_count || 0);
+      const width = Number(img?.width || 0);
+      return voteAverage * 10 + Math.min(voteCount, 20) + Math.min(width / 250, 8);
+    };
+
+    // Do not blindly take the first TMDB logo. Keep French first, then English,
+    // but choose the strongest community-rated/resolution candidate inside the
+    // best available language bucket. If the only candidate is a very weak,
+    // unvoted asset, omit it and let Nuvio fall back to readable title text.
+    const sortedLogos = [...logos].sort((a: any, b: any) => {
+      const langDiff = langRank(b) - langRank(a);
+      if (langDiff !== 0) return langDiff;
+      return qualityScore(b) - qualityScore(a);
+    });
+
+    let logoAsset = sortedLogos[0];
+    if (logoAsset && sortedLogos.length === 1) {
+      const voteAverage = Number(logoAsset.vote_average || 0);
+      const voteCount = Number(logoAsset.vote_count || 0);
+      if (voteAverage <= 0 && voteCount <= 0) logoAsset = undefined;
+    }
 
     const logo = logoAsset?.file_path
       ? `https://image.tmdb.org/t/p/w500${logoAsset.file_path}`
