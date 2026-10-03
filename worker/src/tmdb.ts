@@ -119,6 +119,76 @@ export class TMDBClient {
       : undefined;
   }
 
+  async inspectArtworkByTitle(
+    title: string,
+    type: 'movie' | 'series',
+    year?: number,
+    imdbId?: string
+  ): Promise<any> {
+    const found = await this.bestSearchMatch(title, type, year);
+    if (!found?.id) return { found: false, query: { title, type, year } };
+
+    const cleanId = String(found.id);
+    const endpoint = type === 'movie' ? 'movie' : 'tv';
+    const [details, images] = await Promise.all([
+      this.get(
+        `diag-details-v2:${type}:${cleanId}`,
+        `${BASE}/${endpoint}/${encodeURIComponent(cleanId)}?api_key=${this.apiKey}&append_to_response=external_ids`
+      ),
+      this.get(
+        `diag-images-all-v2:${type}:${cleanId}`,
+        `${BASE}/${endpoint}/${encodeURIComponent(cleanId)}/images?api_key=${this.apiKey}`
+      )
+    ]);
+
+    const logos = (Array.isArray(images?.logos) ? images.logos : [])
+      .filter((img: any) => !!img?.file_path)
+      .map((img: any) => ({
+        language: img.iso_639_1 ?? null,
+        width: img.width ?? null,
+        height: img.height ?? null,
+        voteAverage: img.vote_average ?? null,
+        voteCount: img.vote_count ?? null,
+        filePath: img.file_path
+      }));
+
+    const canonicalImdb =
+      (typeof imdbId === 'string' && /^tt\d+$/.test(imdbId) && imdbId) ||
+      (typeof details?.external_ids?.imdb_id === 'string' && /^tt\d+$/.test(details.external_ids.imdb_id)
+        ? details.external_ids.imdb_id
+        : undefined);
+
+    let metahubLogoExists: boolean | null = null;
+    if (canonicalImdb) {
+      try {
+        const res = await fetch(
+          `https://images.metahub.space/logo/medium/${canonicalImdb}/img`,
+          { method: 'HEAD', redirect: 'follow' }
+        );
+        metahubLogoExists = res.ok;
+      } catch {
+        metahubLogoExists = null;
+      }
+    }
+
+    return {
+      found: true,
+      query: { title, type, year },
+      tmdbId: Number(cleanId),
+      imdbId: canonicalImdb,
+      matchedTitle: type === 'movie'
+        ? details?.title || details?.original_title
+        : details?.name || details?.original_name,
+      originalLanguage: details?.original_language ?? null,
+      tmdbLogoCount: logos.length,
+      tmdbLogoLanguages: [...new Set(logos.map((logo: any) => logo.language))],
+      tmdbLogos: logos,
+      metahubLogoExists,
+      posterCount: Array.isArray(images?.posters) ? images.posters.length : 0,
+      backdropCount: Array.isArray(images?.backdrops) ? images.backdrops.length : 0
+    };
+  }
+
   collectTitles(tmdbData: any, type: 'movie' | 'series'): string[] {
     const titles = new Set<string>();
     const primary = type === 'movie' ? tmdbData.title || tmdbData.original_title : tmdbData.name || tmdbData.original_name;

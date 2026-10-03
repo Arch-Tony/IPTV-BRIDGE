@@ -10,6 +10,7 @@ import { getManifest } from './manifest';
 import { CatalogParams, handleCatalog, handleMeta, handleStream } from './handlers';
 import { CACHE, corsPreflight, json } from './responses';
 import { XtreamClient } from './xtream';
+import { TMDBClient } from './tmdb';
 import { Env } from './types';
 
 const ROUTE_KEYWORDS = new Set([
@@ -148,6 +149,19 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   // API
   if (head === 'api') {
     if (route[1] === 'test-connection' && request.method === 'POST') return testConnection(request);
+
+    if (route[1] === 'artwork-diagnostic' && request.method === 'GET') {
+      const title = url.searchParams.get('title')?.trim();
+      const type = url.searchParams.get('type') === 'series' ? 'series' : 'movie';
+      const yearRaw = url.searchParams.get('year')?.trim();
+      const year = yearRaw && /^\d{4}$/.test(yearRaw) ? Number(yearRaw) : undefined;
+      const imdbId = url.searchParams.get('imdbId')?.trim() || undefined;
+      if (!title) return json({ ok: false, error: 'title is required.' }, { status: 400 });
+
+      const tmdb = new TMDBClient(env.TMDB_FALLBACK_KEY, ctx);
+      const artwork = await tmdb.inspectArtworkByTitle(title, type, year, imdbId);
+      return json({ ok: true, artwork }, { cache: 'no-store' });
+    }
 
     return json({ ok: false, error: 'Unknown API route.' }, { status: 404 });
   }
