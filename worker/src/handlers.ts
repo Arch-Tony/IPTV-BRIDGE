@@ -56,19 +56,25 @@ async function getRememberedCatalogSources(
   return (await edgeGet<CatalogSourceRef[]>(catalogSourceKey(config, kind, externalId))) || [];
 }
 
-async function resolveCatalogImdbId(
+interface CatalogCardResolution {
+  externalId?: string;
+  background?: string;
+  logo?: string;
+}
+
+async function resolveCatalogCard(
   item: Awaited<ReturnType<typeof getItems>>[number],
   kind: 'movie' | 'series',
   tmdb: TMDBClient
-): Promise<string | undefined> {
+): Promise<CatalogCardResolution> {
   const clean = cleanTitle(item.title).cleanTitle || item.title;
 
   let full: any | null = null;
   if (item.tmdbId && /^\d+$/.test(item.tmdbId)) {
-    full = await tmdb.getByTmdbId(item.tmdbId, kind);
+    full = await tmdb.getCatalogCard(item.tmdbId, kind);
   } else {
     const found = await tmdb.bestSearchMatch(clean, kind, item.year);
-    if (!found?.id) return undefined;
+    if (!found?.id) return {};
 
     const sourceIdentity = titleIdentity(clean);
     const candidateTitles =
@@ -82,16 +88,28 @@ async function resolveCatalogImdbId(
     const releaseDate = kind === 'movie' ? found.release_date : found.first_air_date;
     const resultYear = releaseDate ? parseInt(String(releaseDate).slice(0, 4), 10) : undefined;
     if (item.year && resultYear) {
-      if (Math.abs(resultYear - item.year) > 1) return undefined;
+      if (Math.abs(resultYear - item.year) > 1) return {};
     } else if (!titleMatches) {
-      return undefined;
+      return {};
     }
 
-    full = await tmdb.getByTmdbId(found.id, kind);
+    full = await tmdb.getCatalogCard(found.id, kind);
   }
 
-  const imdbId = full?.external_ids?.imdb_id;
-  return typeof imdbId === 'string' && /^tt\d+$/.test(imdbId) ? imdbId : undefined;
+  if (!full) return {};
+
+  const imdbId = full.external_ids?.imdb_id;
+  const externalId =
+    typeof imdbId === 'string' && /^tt\d+$/.test(imdbId)
+      ? imdbId
+      : undefined;
+  const artwork = tmdb.catalogArtwork(full);
+
+  return {
+    externalId,
+    background: artwork.background,
+    logo: artwork.logo
+  };
 }
 
 export interface CatalogParams {
@@ -153,10 +171,10 @@ export async function handleCatalog(
   // and this IPTV catalog all refer to the same logical title and watch state.
   // Keep pages at 20: a cache miss can require up to two TMDb requests per item.
   const page = items.slice(skip, skip + CATALOG_PAGE_SIZE);
-  let catalogIds: Array<string | undefined> = page.map(() => undefined);
+  let catalogCards: CatalogCardResolution[] = page.map(() => ({}));
   if (kind === 'movie' || kind === 'series') {
     const tmdb = tmdbFor(config, env, ctx);
-    catalogIds = await Promise.all(page.map((item) => resolveCatalogImdbId(item, kind, tmdb)));
+    catalogCards = await Promise.all(page.map((item) => resolveCatalogCard(item, kind, tmdb)));
   }
 
   // Remember the exact selected Xtream source behind each canonical IMDb card.
@@ -164,7 +182,7 @@ export async function handleCatalog(
   if (kind === 'movie' || kind === 'series') {
     const grouped = new Map<string, CatalogSourceRef[]>();
     page.forEach((item, index) => {
-      const externalId = catalogIds[index];
+      const externalId = catalogCards[index]?.externalId;
       if (!externalId || !externalId.startsWith('tt') || item.streamId === undefined) return;
       const list = grouped.get(externalId) || [];
       list.push({
@@ -183,11 +201,13 @@ export async function handleCatalog(
 
   const metas = page.map((item, index) => ({
     // Fall back to the internal id only when canonical matching is uncertain.
-    id: catalogIds[index] || encodeItemId(item),
+    id: catalogCards[index]?.externalId || encodeItemId(item),
     type: params.type,
     name: cleanTitle(item.title).cleanTitle || item.title,
     poster: item.logo || fallbackPoster,
     posterShape: kind === 'channel' ? 'square' : 'poster',
+    background: catalogCards[index]?.background,
+    logo: catalogCards[index]?.logo,
     description: `Category: ${item.category}`,
     year: item.year
   }));

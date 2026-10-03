@@ -54,6 +54,39 @@ export class TMDBClient {
     );
   }
 
+  /**
+   * Lightweight details used by IPTV novelty catalog cards.
+   * Fetch identity + artwork in one cached TMDB request so Nuvio can render
+   * backdrop + clearlogo immediately, without waiting for the detail screen.
+   */
+  async getCatalogCard(tmdbId: number | string, type: 'movie' | 'series'): Promise<any | null> {
+    const cleanId = String(tmdbId).replace(/^tmdb:/, '');
+    const endpoint = type === 'movie' ? 'movie' : 'tv';
+    return this.get(
+      `catalog-card:${type}:${cleanId}:fr-en`,
+      `${BASE}/${endpoint}/${encodeURIComponent(cleanId)}?api_key=${this.apiKey}&language=fr-FR&append_to_response=external_ids,images&include_image_language=fr,en,null`
+    );
+  }
+
+  catalogArtwork(tmdbData: any): { background?: string; logo?: string } {
+    const background = tmdbData?.backdrop_path
+      ? `https://image.tmdb.org/t/p/w1280${tmdbData.backdrop_path}`
+      : undefined;
+
+    const logos = Array.isArray(tmdbData?.images?.logos) ? tmdbData.images.logos : [];
+    const logoAsset =
+      logos.find((img: any) => img?.file_path && img.iso_639_1 === 'fr') ||
+      logos.find((img: any) => img?.file_path && img.iso_639_1 === 'en') ||
+      logos.find((img: any) => img?.file_path && img.iso_639_1 == null) ||
+      logos.find((img: any) => img?.file_path);
+
+    const logo = logoAsset?.file_path
+      ? `https://image.tmdb.org/t/p/w500${logoAsset.file_path}`
+      : undefined;
+
+    return { background, logo };
+  }
+
   collectTitles(tmdbData: any, type: 'movie' | 'series'): string[] {
     const titles = new Set<string>();
     const primary = type === 'movie' ? tmdbData.title || tmdbData.original_title : tmdbData.name || tmdbData.original_name;
