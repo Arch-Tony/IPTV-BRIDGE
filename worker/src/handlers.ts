@@ -62,6 +62,9 @@ interface CatalogCardResolution {
   logo?: string;
   status?: string;
   lastAirDate?: string;
+  originalLanguage?: string;
+  originCountries?: string[];
+  genreIds?: number[];
 }
 
 async function resolveCatalogCard(
@@ -106,14 +109,45 @@ async function resolveCatalogCard(
       ? imdbId
       : undefined;
   const artwork = tmdb.catalogArtwork(full);
+  const originCountries =
+    kind === 'movie'
+      ? (Array.isArray(full.production_countries)
+          ? full.production_countries
+              .map((country: any) => country?.iso_3166_1)
+              .filter((country: unknown): country is string => typeof country === 'string' && !!country)
+          : [])
+      : (Array.isArray(full.origin_country)
+          ? full.origin_country.filter((country: unknown): country is string => typeof country === 'string' && !!country)
+          : []);
+  const genreIds = Array.isArray(full.genres)
+    ? full.genres
+        .map((genre: any) => Number(genre?.id))
+        .filter((id: number) => Number.isFinite(id))
+    : [];
 
   return {
     externalId,
     background: artwork.background,
     logo: artwork.logo,
     status: typeof full.status === 'string' ? full.status : undefined,
-    lastAirDate: typeof full.last_air_date === 'string' ? full.last_air_date : undefined
+    lastAirDate: typeof full.last_air_date === 'string' ? full.last_air_date : undefined,
+    originalLanguage: typeof full.original_language === 'string' ? full.original_language : undefined,
+    originCountries,
+    genreIds
   };
+}
+
+function isJapaneseAnime(card: CatalogCardResolution): boolean {
+  // Hide confirmed Japanese animation from IPTV Bridge catalog rows only.
+  // The provider item itself stays available to stream matching, so an anime
+  // opened from AIO Metadata can still use the IPTV source. Western adult
+  // animation such as The Simpsons or Futurama remains visible.
+  const isAnimation = card.genreIds?.includes(16) === true;
+  if (!isAnimation) return false;
+
+  const originalLanguage = (card.originalLanguage || '').trim().toLowerCase();
+  const fromJapan = card.originCountries?.some((country) => country.toUpperCase() === 'JP') === true;
+  return originalLanguage === 'ja' || fromJapan;
 }
 
 function isStaleEndedSeries(card: CatalogCardResolution): boolean {
@@ -193,6 +227,12 @@ export async function handleCatalog(
   if (kind === 'movie' || kind === 'series') {
     const tmdb = tmdbFor(config, env, ctx);
     catalogCards = await Promise.all(page.map((item) => resolveCatalogCard(item, kind, tmdb)));
+
+    const nonAnime = page
+      .map((item, index) => ({ item, card: catalogCards[index] }))
+      .filter(({ card }) => !isJapaneseAnime(card));
+    page = nonAnime.map(({ item }) => item);
+    catalogCards = nonAnime.map(({ card }) => card);
 
     if (kind === 'series') {
       const kept = page
