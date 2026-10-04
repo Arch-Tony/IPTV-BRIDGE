@@ -137,17 +137,26 @@ async function resolveCatalogCard(
   };
 }
 
-function isJapaneseAnime(card: CatalogCardResolution): boolean {
-  // Hide confirmed Japanese animation from IPTV Bridge catalog rows only.
-  // The provider item itself stays available to stream matching, so an anime
-  // opened from AIO Metadata can still use the IPTV source. Western adult
-  // animation such as The Simpsons or Futurama remains visible.
+function isEastAsianAnimation(card: CatalogCardResolution): boolean {
+  // Hide confirmed East-Asian animation from IPTV Bridge catalog rows only.
+  // This covers Japanese anime plus Chinese donghua and Korean animation,
+  // while keeping Western adult animation such as The Simpsons, Futurama,
+  // Golden Axe or Get Jiro. Provider items remain available to stream matching.
   const isAnimation = card.genreIds?.includes(16) === true;
   if (!isAnimation) return false;
 
   const originalLanguage = (card.originalLanguage || '').trim().toLowerCase();
-  const fromJapan = card.originCountries?.some((country) => country.toUpperCase() === 'JP') === true;
-  return originalLanguage === 'ja' || fromJapan;
+  const asianLanguage =
+    originalLanguage === 'ja' ||
+    originalLanguage === 'ko' ||
+    originalLanguage === 'zh' ||
+    originalLanguage.startsWith('zh-');
+
+  const asianCountries = new Set(['JP', 'KR', 'CN', 'TW', 'HK']);
+  const fromEastAsia =
+    card.originCountries?.some((country) => asianCountries.has(country.toUpperCase())) === true;
+
+  return asianLanguage || fromEastAsia;
 }
 
 function isStaleEndedSeries(card: CatalogCardResolution): boolean {
@@ -230,7 +239,7 @@ export async function handleCatalog(
 
     const nonAnime = page
       .map((item, index) => ({ item, card: catalogCards[index] }))
-      .filter(({ card }) => !isJapaneseAnime(card));
+      .filter(({ card }) => !isEastAsianAnimation(card));
     page = nonAnime.map(({ item }) => item);
     catalogCards = nonAnime.map(({ card }) => card);
 
