@@ -159,6 +159,30 @@ function isEastAsianAnimation(card: CatalogCardResolution): boolean {
   return asianLanguage || fromEastAsia;
 }
 
+function shouldHideAnimationCatalogItem(
+  item: Awaited<ReturnType<typeof getItems>>[number],
+  card: CatalogCardResolution
+): boolean {
+  if (isEastAsianAnimation(card)) return true;
+
+  // Some provider anime entries fail TMDB matching entirely. In that case the
+  // detail page falls back to "IPTV title" and we have no country/language data
+  // to classify them. Only for clearly anime/manga-labelled provider categories,
+  // hide unresolved items from catalog rows. Resolved Western animation in the
+  // same broad category remains visible.
+  const category = (item.category || '').toLowerCase();
+  const animeCategory =
+    /(^|[^a-z])(anime|manga|japan|japanese|japon|japonais|donghua)([^a-z]|$)/i.test(category);
+
+  const resolved =
+    !!card.externalId ||
+    !!card.originalLanguage ||
+    (card.originCountries?.length || 0) > 0 ||
+    (card.genreIds?.length || 0) > 0;
+
+  return animeCategory && !resolved;
+}
+
 function isStaleEndedSeries(card: CatalogCardResolution): boolean {
   const status = (card.status || '').trim().toLowerCase();
   if (!['ended', 'canceled', 'cancelled'].includes(status)) return false;
@@ -239,7 +263,7 @@ export async function handleCatalog(
 
     const nonAnime = page
       .map((item, index) => ({ item, card: catalogCards[index] }))
-      .filter(({ card }) => !isEastAsianAnimation(card));
+      .filter(({ item, card }) => !shouldHideAnimationCatalogItem(item, card));
     page = nonAnime.map(({ item }) => item);
     catalogCards = nonAnime.map(({ card }) => card);
 
