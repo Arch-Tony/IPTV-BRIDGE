@@ -272,7 +272,8 @@ export async function handleCatalog(
     const nonAnime = page
       .map((item, index) => ({ item, card: catalogCards[index] }))
       .filter(({ item, card }) =>
-        !shouldHideAnimationCatalogItem(item, card) && !isFrenchOnlyCatalogProduction(card));
+        !shouldHideAnimationCatalogItem(item, card) &&
+        (search || !isFrenchOnlyCatalogProduction(card)));
     page = nonAnime.map(({ item }) => item);
     catalogCards = nonAnime.map(({ card }) => card);
 
