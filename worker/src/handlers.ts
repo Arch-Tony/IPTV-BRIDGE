@@ -81,7 +81,11 @@ async function resolveCatalogCard(
   if (item.tmdbId && /^\d+$/.test(item.tmdbId)) {
     full = await tmdb.getCatalogCard(item.tmdbId, kind);
   } else {
-    const found = await tmdb.bestSearchMatch(clean, kind, item.year);
+    // Providers sometimes label a release one year apart from TMDB.
+    // Retry without the year only when the strict search has no result;
+    // the existing release-year validation below still rejects mismatches.
+    const found = await tmdb.bestSearchMatch(clean, kind, item.year) ||
+      (item.year ? await tmdb.bestSearchMatch(clean, kind) : null);
     if (!found?.id) return {};
 
     const sourceIdentity = titleIdentity(clean);
