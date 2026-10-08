@@ -209,7 +209,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     return json({ ok: false, error: 'Unknown API route.' }, { status: 404 });
   }
 
-  if (head === 'health') return json({ ok: true, version: '3.1.4-quality-diagnostics' }, { cache: 'no-store' });
+  if (head === 'health') return json({ ok: true, version: '3.1.5-quality-match-fix' }, { cache: 'no-store' });
 
   // Everything else -> static configurator/landing assets.
   return assetResponse(env, request);
