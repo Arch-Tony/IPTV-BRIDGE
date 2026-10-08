@@ -195,7 +195,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     // Exclude playback URLs (which embed Xtream credentials) from diagnostics.
     const imdb = (url.searchParams.get('imdb') || '').trim();
     let streamResponse: { count: number; streams: Array<{ name: string; title: string; quality: string }> } | undefined;
-    if (/^tt\\d{6,11}$/.test(imdb)) {
+    if (/^tt\d{6,11}$/.test(imdb)) {
       const streamResult = await handleStream(env, config, 'movie', imdb, ctx);
       const streamData = (await streamResult.json()) as { streams?: Array<{ name?: string; title?: string; quality?: string }> };
       const streams = Array.isArray(streamData.streams) ? streamData.streams : [];
