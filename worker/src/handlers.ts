@@ -137,6 +137,14 @@ async function resolveCatalogCard(
   };
 }
 
+/** Hide only confirmed exclusively French productions from IPTV catalog rows.
+ * International coproductions and unknown origins stay visible.
+ * Stream matching deliberately remains unchanged. */
+function isFrenchOnlyCatalogProduction(card: CatalogCardResolution): boolean {
+  const countries = [...new Set((card.originCountries || []).map((c) => c.toUpperCase()))];
+  return countries.length === 1 && countries[0] === 'FR';
+}
+
 function isEastAsianAnimation(card: CatalogCardResolution): boolean {
   // Hide confirmed East-Asian animation from IPTV Bridge catalog rows only.
   // This covers Japanese anime plus Chinese donghua and Korean animation,
@@ -263,7 +271,8 @@ export async function handleCatalog(
 
     const nonAnime = page
       .map((item, index) => ({ item, card: catalogCards[index] }))
-      .filter(({ item, card }) => !shouldHideAnimationCatalogItem(item, card));
+      .filter(({ item, card }) =>
+        !shouldHideAnimationCatalogItem(item, card) && !isFrenchOnlyCatalogProduction(card));
     page = nonAnime.map(({ item }) => item);
     catalogCards = nonAnime.map(({ card }) => card);
 
