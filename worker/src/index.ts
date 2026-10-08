@@ -186,6 +186,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
         title: name,
         normalizedTitle: titleIdentity(name),
         quality: cleanTitle(name).quality || 'unknown',
+        providerTmdbId: item.tmdb_id ?? item.tmdb ?? null,
         category: item.category_name || names.get(categoryId) || 'Uncategorized',
         categorySelected: selectedCategory,
         presentInBridgeCache: id !== undefined && availableIds.has(String(id))
