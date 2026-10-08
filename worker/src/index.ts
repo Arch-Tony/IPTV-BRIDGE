@@ -5,7 +5,9 @@
 // URL shape (unchanged from the original addon, so existing installs keep
 // working): https://<domain>/<compressed-config>/manifest.json
 
-import { decodeConfig } from './config';
+import { decodeConfig, validateConfig } from './config';
+import { cleanTitle, titleIdentity } from './cleaner';
+import { getItems } from './provider';
 import { getManifest } from './manifest';
 import { CatalogParams, handleCatalog, handleMeta, handleStream } from './handlers';
 import { CACHE, corsPreflight, json } from './responses';
@@ -145,13 +147,69 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   // Configurator page (also reachable as /<config>/configure).
   if (head === 'configure') return assetResponse(env, request, '/configure.html');
 
+  // Read-only diagnostic for a movie title, scoped to the user's encoded
+  // configuration. Deliberately omit account details, playable URLs and stream IDs.
+  if (head === 'api' && route[1] === 'diagnose-vod' && request.method === 'GET') {
+    const config = decodeConfig(configStr);
+    const title = (url.searchParams.get('title') || '').trim().slice(0, 120);
+    const queryIdentity = titleIdentity(title);
+    if (validateConfig(config) || config.type !== 'xtream' || queryIdentity.length < 8) {
+      return json({ ok: false, error: 'Valid Xtream configuration and film title required.' }, { status: 400 });
+    }
+
+    const client = new XtreamClient(config.host!, config.username!, config.password!);
+    const [raw, categories, available] = await Promise.all([
+      client.getStreams('movie'),
+      client.getCategories('movie').catch(() => []),
+      getItems(config, 'movie', ctx)
+    ]);
+    const names = new Map(categories.map((category) => [String(category.category_id), category.category_name]));
+    const configured = (config.includedCategories || []).map(String).filter(Boolean);
+    const selected = configured.length
+      ? new Set(configured.filter((id) => id.startsWith('vod_')).map((id) => id.slice(4)))
+      : null;
+    const availableIds = new Set(
+      available.filter((item) => item.streamId !== undefined).map((item) => String(item.streamId))
+    );
+    const candidates = raw.filter((item) => {
+      const normalized = titleIdentity(item.name || item.title || '');
+      return normalized === queryIdentity ||
+        normalized.includes(queryIdentity) ||
+        (normalized.length >= 8 && queryIdentity.includes(normalized));
+    });
+    const details = candidates.slice(0, 30).map((item) => {
+      const name = item.name || item.title || '';
+      const categoryId = String(item.category_id ?? '');
+      const selectedCategory = !selected || selected.has(categoryId);
+      const id = item.stream_id ?? item.series_id;
+      return {
+        title: name,
+        normalizedTitle: titleIdentity(name),
+        quality: cleanTitle(name).quality || 'unknown',
+        category: item.category_name || names.get(categoryId) || 'Uncategorized',
+        categorySelected: selectedCategory,
+        presentInBridgeCache: id !== undefined && availableIds.has(String(id))
+      };
+    });
+    return json({
+      ok: true,
+      diagnostic: 'vod-multi-quality',
+      searchedTitle: title,
+      normalizedQuery: queryIdentity,
+      configuredCategoryMode: selected ? 'selected-only' : 'all',
+      providerMatchCount: candidates.length,
+      resultsLimited: candidates.length > details.length,
+      candidates: details
+    }, { cache: 'no-store' });
+  }
+
   // API
   if (head === 'api') {
     if (route[1] === 'test-connection' && request.method === 'POST') return testConnection(request);
     return json({ ok: false, error: 'Unknown API route.' }, { status: 404 });
   }
 
-  if (head === 'health') return json({ ok: true, version: '3.1.3-multi-quality' }, { cache: 'no-store' });
+  if (head === 'health') return json({ ok: true, version: '3.1.4-quality-diagnostics' }, { cache: 'no-store' });
 
   // Everything else -> static configurator/landing assets.
   return assetResponse(env, request);
