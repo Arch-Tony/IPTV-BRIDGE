@@ -142,8 +142,13 @@ export function rankMatches(
 }
 
 export function itemsToStreams(matches: Array<{ item: ProviderItem; score: number }>): StremioStream[] {
+  const qualityRank = (title: string): number => {
+    const q = cleanTitle(title).quality;
+    return q === '4K UHD' ? 4 : q === '1080p' ? 3 : q === '720p' ? 2 : q === 'SD' ? 1 : 0;
+  };
   return matches
     .filter((m) => m.item.url)
+    .sort((a, b) => qualityRank(b.item.title) - qualityRank(a.item.title))
     .map(({ item }) => {
       const parsed = cleanTitle(item.title);
       const quality = parsed.quality || '';
