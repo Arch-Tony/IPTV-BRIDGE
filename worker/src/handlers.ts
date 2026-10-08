@@ -592,7 +592,27 @@ async function resolveGlobalStreams(
     : [];
 
   if (!isSeries && directTmdbMatches.length) {
-    return itemsToStreams(directTmdbMatches.map((item) => ({ item, score: 1 })));
+    // TMDb identifiers are the strongest evidence, but an Xtream provider may
+    // assign TMDb IDs to only one of several HD/4K releases of the same movie.
+    // Expand the direct match with exact-title editions from selected categories,
+    // rejecting different years or a conflicting known TMDb ID.
+    const exactTitles = new Set(directTmdbMatches.map((item) => titleIdentity(item.title)).filter(Boolean));
+    const refs = available.filter((item) => {
+      if (item.tmdbId && String(item.tmdbId) === targetTmdbId) return true;
+      if (!exactTitles.has(titleIdentity(item.title))) return false;
+      const itemYear = item.year ?? cleanTitle(item.title).year;
+      if (year && itemYear && Math.abs(year - itemYear) > 1) return false;
+      if (item.tmdbId && String(item.tmdbId) !== targetTmdbId) return false;
+      return true;
+    });
+    const seen = new Set<string>();
+    const unique = refs.filter((item) => {
+      const id = String(item.streamId ?? item.url ?? item.id);
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+    return itemsToStreams(unique.map((item) => ({ item, score: 1 })));
   }
 
   if (
