@@ -72,7 +72,10 @@ async function resolveCatalogCard(
   kind: 'movie' | 'series',
   tmdb: TMDBClient
 ): Promise<CatalogCardResolution> {
-  const clean = cleanTitle(item.title).cleanTitle || item.title;
+  // VOF denotes an original French-language edition, not part of the film
+  // name. Strip it only for catalog TMDB lookup; stream matching is untouched.
+  const catalogTitle = item.title.replace(/\bVOF\b/gi, ' ');
+  const clean = cleanTitle(catalogTitle).cleanTitle || catalogTitle.trim();
 
   let full: any | null = null;
   if (item.tmdbId && /^\d+$/.test(item.tmdbId)) {
@@ -137,12 +140,25 @@ async function resolveCatalogCard(
   };
 }
 
-/** Hide only confirmed exclusively French productions from IPTV catalog rows.
- * International coproductions and unknown origins stay visible.
- * Stream matching deliberately remains unchanged. */
-function isFrenchOnlyCatalogProduction(card: CatalogCardResolution): boolean {
+/** Hide French-origin productions from IPTV discovery rows only.
+ * Include French-language coproductions (e.g. FR/BE), but do not hide
+ * foreign films simply because the provider offers a VF/MULTI soundtrack.
+ * The VOF fallback is used only when TMDB has no country information.
+ * Provider items and /stream routes remain completely untouched. */
+function isFrenchCatalogProduction(
+  item: Awaited<ReturnType<typeof getItems>>[number],
+  card: CatalogCardResolution
+): boolean {
   const countries = [...new Set((card.originCountries || []).map((c) => c.toUpperCase()))];
-  return countries.length === 1 && countries[0] === 'FR';
+  const originalFrench = /^fr(?:$|-)/i.test((card.originalLanguage || '').trim());
+  const frenchOriginalTag = /\bVOF\b/i.test(item.title);
+
+  if (countries.includes('FR')) {
+    return countries.length === 1 || originalFrench || frenchOriginalTag;
+  }
+  // Provider metadata is sometimes incomplete. VOF (original version
+  // in French) is a stronger signal than VF/VFF/MULTI (dubbed audio).
+  return countries.length === 0 && frenchOriginalTag;
 }
 
 function isEastAsianAnimation(card: CatalogCardResolution): boolean {
@@ -273,7 +289,7 @@ export async function handleCatalog(
       .map((item, index) => ({ item, card: catalogCards[index] }))
       .filter(({ item, card }) =>
         !shouldHideAnimationCatalogItem(item, card) &&
-        (search || !isFrenchOnlyCatalogProduction(card)));
+        (search || !isFrenchCatalogProduction(item, card)));
     page = nonAnime.map(({ item }) => item);
     catalogCards = nonAnime.map(({ card }) => card);
 
