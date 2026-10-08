@@ -191,6 +191,23 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
         presentInBridgeCache: id !== undefined && availableIds.has(String(id))
       };
     });
+    // Compare raw Xtream candidates with the actual addon stream response.
+    // Exclude playback URLs (which embed Xtream credentials) from diagnostics.
+    const imdb = (url.searchParams.get('imdb') || '').trim();
+    let streamResponse: { count: number; streams: Array<{ name: string; title: string; quality: string }> } | undefined;
+    if (/^tt\\d{6,11}$/.test(imdb)) {
+      const streamResult = await handleStream(env, config, 'movie', imdb, ctx);
+      const streamData = (await streamResult.json()) as { streams?: Array<{ name?: string; title?: string; quality?: string }> };
+      const streams = Array.isArray(streamData.streams) ? streamData.streams : [];
+      streamResponse = {
+        count: streams.length,
+        streams: streams.map((stream) => ({
+          name: stream.name || 'IPTV',
+          title: stream.title || '',
+          quality: stream.quality || cleanTitle(stream.title || '').quality || 'unknown'
+        }))
+      };
+    }
     return json({
       ok: true,
       diagnostic: 'vod-multi-quality',
@@ -199,7 +216,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
       configuredCategoryMode: selected ? 'selected-only' : 'all',
       providerMatchCount: candidates.length,
       resultsLimited: candidates.length > details.length,
-      candidates: details
+      candidates: details,
+      ...(streamResponse ? { streamResponse } : {})
     }, { cache: 'no-store' });
   }
 
@@ -209,7 +227,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     return json({ ok: false, error: 'Unknown API route.' }, { status: 404 });
   }
 
-  if (head === 'health') return json({ ok: true, version: '3.1.5-quality-match-fix' }, { cache: 'no-store' });
+  if (head === 'health') return json({ ok: true, version: '3.1.6-stream-diagnostics' }, { cache: 'no-store' });
 
   // Everything else -> static configurator/landing assets.
   return assetResponse(env, request);
