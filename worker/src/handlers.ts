@@ -487,11 +487,49 @@ async function resolveGlobalStreams(
       const client = new XtreamClient(config.host!, config.username!, config.password!);
 
       if (!isSeries) {
-        return allowedRemembered.map((ref) => ({
-          name: 'IPTV',
-          title: `${ref.title}${ref.category ? ` • ${ref.category}` : ''}`,
-          url: client.movieUrl(ref.streamId, ref.containerExtension || 'mp4')
+        // Catalog pages contain only 20 entries. Other editions of the same film
+        // may be on a different page, so supplement the remembered refs from the
+        // full allowed provider list. Never expand to a different title or year.
+        const known = new Set(allowedRemembered.map((ref) => String(ref.streamId)));
+        const refs = [...allowedRemembered];
+        const seeds = allowedRemembered.map((ref) => ({
+          identity: titleIdentity(ref.title),
+          year: cleanTitle(ref.title).year,
+          tmdbId: ref.tmdbId
         }));
+        for (const item of allowedItems) {
+          if (item.streamId === undefined || known.has(String(item.streamId))) continue;
+          const identity = titleIdentity(item.title);
+          const candidateYear = item.year ?? cleanTitle(item.title).year;
+          if (!seeds.some((seed) =>
+            seed.identity && identity === seed.identity &&
+            !(seed.year && candidateYear && seed.year !== candidateYear) &&
+            !(seed.tmdbId && item.tmdbId && seed.tmdbId !== item.tmdbId)
+          )) continue;
+          known.add(String(item.streamId));
+          refs.push({
+            streamId: item.streamId,
+            title: item.title,
+            containerExtension: item.containerExtension,
+            category: item.category,
+            tmdbId: item.tmdbId
+          });
+        }
+        const qualityRank = (title: string): number => {
+          const quality = cleanTitle(title).quality;
+          return quality === '4K UHD' ? 4 : quality === '1080p' ? 3 :
+            quality === '720p' ? 2 : quality === 'SD' ? 1 : 0;
+        };
+        refs.sort((a, b) => qualityRank(b.title) - qualityRank(a.title));
+        return refs.map((ref) => {
+          const quality = cleanTitle(ref.title).quality;
+          return {
+            name: `IPTV${quality ? ' ' + quality : ''}`,
+            title: `${ref.title}${ref.category ? ` • ${ref.category}` : ''}`,
+            url: client.movieUrl(ref.streamId, ref.containerExtension || 'mp4'),
+            quality
+          };
+        });
       }
 
       if (season !== undefined && episode !== undefined) {
