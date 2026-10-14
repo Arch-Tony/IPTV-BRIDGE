@@ -211,6 +211,18 @@ function shouldHideAnimationCatalogItem(
   return animeCategory && !resolved;
 }
 
+/** Single-title opt-out from the recent SERIES carousel.
+ * Keep provider inventory, search results, matching, and streams untouched.
+ * IMDb identity handles providers that label WWE Rivals as just "Rivals". */
+function isWweRivalsRecentCatalogItem(
+  item: Awaited<ReturnType<typeof getItems>>[number],
+  card: CatalogCardResolution
+): boolean {
+  if (card.externalId === 'tt21104632') return true;
+  const identity = titleIdentity(item.title);
+  return identity === 'wwe rivals' || identity === 'rivals wwe';
+}
+
 function isStaleEndedSeries(card: CatalogCardResolution): boolean {
   const status = (card.status || '').trim().toLowerCase();
   if (!['ended', 'canceled', 'cancelled'].includes(status)) return false;
@@ -300,7 +312,9 @@ export async function handleCatalog(
     if (kind === 'series') {
       const kept = page
         .map((item, index) => ({ item, card: catalogCards[index] }))
-        .filter(({ card }) => !isStaleEndedSeries(card));
+        .filter(({ item, card }) =>
+          !isStaleEndedSeries(card) &&
+          (search || !isWweRivalsRecentCatalogItem(item, card)));
       page = kept.map(({ item }) => item);
       catalogCards = kept.map(({ card }) => card);
     }
