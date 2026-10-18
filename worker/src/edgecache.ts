@@ -11,6 +11,7 @@
 //   2. Cache API persistence across requests (per colo)
 
 const inflight = new Map<string, Promise<unknown>>();
+const localRateLimitUntil = new Map<string, number>();
 
 export interface EdgeCacheOptions {
   /** Keep a second copy longer so a temporary upstream failure can serve stale data. */
@@ -60,8 +61,14 @@ export async function edgeCached<T>(
   if (hit !== undefined) return hit;
 
   // If this provider recently returned 429, never probe it again during the
-  // cooldown. Serve the last good provider snapshot when available.
-  if (cooldownReq && (await cache.match(cooldownReq))) {
+  // cooldown. Keep a process-local marker as well as the colo Cache API marker
+  // so the very next request cannot race the asynchronous cache.put().
+  const localUntil = localRateLimitUntil.get(cooldownKey) || 0;
+  if (localUntil && localUntil <= Date.now()) localRateLimitUntil.delete(cooldownKey);
+  const coolingDown =
+    !!options.rateLimitBackoffSec &&
+    (localUntil > Date.now() || !!(cooldownReq && (await cache.match(cooldownReq))));
+  if (coolingDown) {
     const stale = await readJson(staleReq);
     if (stale !== undefined) return stale;
     const error: any = new Error('Upstream 429 (cooldown)');
@@ -96,18 +103,25 @@ export async function edgeCached<T>(
 
       return value;
     } catch (err: any) {
-      if (err?.status === 429 && cooldownReq && options.rateLimitBackoffSec) {
+      const status = Number(err?.status);
+      if (status === 429 && cooldownReq && options.rateLimitBackoffSec) {
         const hinted = Number(err?.retryAfterSeconds);
         const requested = Number.isFinite(hinted) && hinted > 0 ? hinted : options.rateLimitBackoffSec;
-        const cooldownSec = Math.max(60, Math.min(60 * 60, Math.ceil(requested)));
+        const cooldownSec = Math.max(60, Math.min(6 * 60 * 60, Math.ceil(requested)));
+        localRateLimitUntil.set(cooldownKey, Date.now() + cooldownSec * 1000);
         const marker = new Response('1', {
           headers: { 'Cache-Control': `public, max-age=${cooldownSec}` }
         });
         ctx.waitUntil(cache.put(cooldownReq, marker));
       }
 
-      const stale = await readJson(staleReq);
-      if (stale !== undefined) return stale;
+      // Stale data is appropriate for transient failures (network/timeout,
+      // 429, or 5xx), but never mask a real 4xx auth/configuration error.
+      const transient = !Number.isFinite(status) || status === 429 || status >= 500;
+      if (transient) {
+        const stale = await readJson(staleReq);
+        if (stale !== undefined) return stale;
+      }
       throw err;
     } finally {
       inflight.delete(key);
