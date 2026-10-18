@@ -4,7 +4,7 @@
 import { configFingerprint, validateConfig } from './config';
 import { cleanTitle, titleIdentity } from './cleaner';
 import { decodeItemId, encodeItemId, isItemId } from './id';
-import { getItems, getTitleMatches } from './provider';
+import { getCachedEpisodeStreams, getCachedSeriesEpisodes, getItems, getTitleMatches } from './provider';
 import { itemsToStreams, rankMatches } from './matcher';
 import { TMDBClient } from './tmdb';
 import { XtreamClient } from './xtream';
@@ -387,8 +387,7 @@ export async function handleMeta(
 
       if (ref.k === 'series' && config.type === 'xtream' && ref.sid !== undefined) {
         try {
-          const client = new XtreamClient(config.host!, config.username!, config.password!);
-          const episodes = await client.listAllEpisodes(ref.sid);
+          const episodes = await getCachedSeriesEpisodes(config, ref.sid, ctx);
           base.videos = episodes.map((ep) => ({
             id: `${id}:${ep.season}:${ep.episode}`,
             title: ep.title,
@@ -453,14 +452,18 @@ export async function handleStream(
   if (!isSafeProtocolId(id) || validateConfig(config)) return json({ streams: [] }, { cache: CACHE.stream });
 
   if (isItemId(id)) {
-    const streams = await resolveOwnItemStreams(config, id);
+    const streams = await resolveOwnItemStreams(config, id, ctx);
     return json({ streams }, { cache: CACHE.stream });
   }
   const streams = await resolveGlobalStreams(env, config, id, type, ctx);
   return json({ streams }, { cache: CACHE.stream });
 }
 
-async function resolveOwnItemStreams(config: UserConfig, id: string): Promise<StremioStream[]> {
+async function resolveOwnItemStreams(
+  config: UserConfig,
+  id: string,
+  ctx: ExecutionContext
+): Promise<StremioStream[]> {
   const { ref, season, episode } = decodeItemId(id);
   if (!ref) return [];
 
@@ -470,8 +473,7 @@ async function resolveOwnItemStreams(config: UserConfig, id: string): Promise<St
   }
 
   if (config.type === 'xtream' && ref.sid !== undefined && season !== undefined && episode !== undefined) {
-    const client = new XtreamClient(config.host!, config.username!, config.password!);
-    const eps = await client.getEpisodeStreams(ref.sid, season, episode);
+    const eps = await getCachedEpisodeStreams(config, ref.sid, season, episode, ctx);
     return eps.map((e) => ({
       name: `IPTV${e.quality ? ' ' + e.quality : ''}`,
       title: e.title,
@@ -578,7 +580,7 @@ async function resolveGlobalStreams(
 
       if (season !== undefined && episode !== undefined) {
         for (const ref of allowedRemembered) {
-          const eps = await client.getEpisodeStreams(ref.streamId, season, episode);
+          const eps = await getCachedEpisodeStreams(config, ref.streamId, season, episode, ctx);
           if (!eps.length) continue;
           return eps.map((e) => ({
             name: `IPTV${e.quality ? ' ' + e.quality : ''}`,
@@ -669,7 +671,7 @@ async function resolveGlobalStreams(
     const client = new XtreamClient(config.host!, config.username!, config.password!);
     for (const item of directTmdbMatches.slice(0, 3)) {
       if (item.streamId === undefined) continue;
-      const eps = await client.getEpisodeStreams(item.streamId, season, episode);
+      const eps = await getCachedEpisodeStreams(config, item.streamId, season, episode, ctx);
       if (eps.length) {
         return eps.map((e) => ({
           name: `IPTV${e.quality ? ' ' + e.quality : ''}`,
@@ -700,7 +702,7 @@ async function resolveGlobalStreams(
     const out: StremioStream[] = [];
     for (const m of matches.slice(0, 3)) {
       if (m.item.streamId === undefined) continue;
-      const eps = await client.getEpisodeStreams(m.item.streamId, season, episode);
+      const eps = await getCachedEpisodeStreams(config, m.item.streamId, season, episode, ctx);
       for (const e of eps) {
         out.push({
           name: `IPTV${e.quality ? ' ' + e.quality : ''}`,

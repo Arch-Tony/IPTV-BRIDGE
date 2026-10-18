@@ -38,12 +38,34 @@ function normalizeHost(host: string): string {
   return h.replace(/\/+$/, '');
 }
 
+export class XtreamUpstreamError extends Error {
+  readonly status: number;
+  readonly retryAfterSeconds?: number;
+
+  constructor(status: number, retryAfterSeconds?: number) {
+    super(`Upstream ${status}`);
+    this.name = 'XtreamUpstreamError';
+    this.status = status;
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+function parseRetryAfter(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds > 0) return Math.ceil(seconds);
+
+  const at = Date.parse(value);
+  if (!Number.isFinite(at)) return undefined;
+  return Math.max(1, Math.ceil((at - Date.now()) / 1000));
+}
+
 async function getJson(url: string, timeoutMs = 15000): Promise<any> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: ctrl.signal });
-    if (!res.ok) throw new Error(`Upstream ${res.status}`);
+    if (!res.ok) throw new XtreamUpstreamError(res.status, parseRetryAfter(res.headers.get('Retry-After')));
     return await res.json();
   } finally {
     clearTimeout(timer);

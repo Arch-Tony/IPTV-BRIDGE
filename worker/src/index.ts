@@ -58,18 +58,22 @@ async function testConnection(request: Request): Promise<Response> {
       if (!host || !username || !password)
         return json({ success: false, error: 'Host, Username, and Password are required.' }, { status: 400 });
       const client = new XtreamClient(host, username, password);
-      const [auth, live, movie, series] = await Promise.all([
-        client.authenticate(),
-        client.getCategories('live').catch(() => []),
-        client.getCategories('movie').catch(() => []),
-        client.getCategories('series').catch(() => [])
-      ]);
+
+      // Authenticate first. A blocked/rate-limited account now costs one request,
+      // not four parallel requests. Only enumerate categories after auth succeeds.
+      const auth = await client.authenticate();
       const info = auth?.user_info;
-      const categories = [
-        ...live.map((c) => ({ id: `live_${c.category_id}`, name: c.category_name, type: 'live' })),
-        ...movie.map((c) => ({ id: `vod_${c.category_id}`, name: c.category_name, type: 'movie' })),
-        ...series.map((c) => ({ id: `series_${c.category_id}`, name: c.category_name, type: 'series' }))
-      ];
+      const categories: Array<{ id: string; name: string; type: string }> = [];
+      for (const kind of ['live', 'movie', 'series'] as const) {
+        try {
+          const list = await client.getCategories(kind);
+          const prefix = kind === 'live' ? 'live_' : kind === 'movie' ? 'vod_' : 'series_';
+          categories.push(...list.map((c) => ({ id: `${prefix}${c.category_id}`, name: c.category_name, type: kind })));
+        } catch {
+          // Stop immediately instead of multiplying failed upstream probes.
+          break;
+        }
+      }
       return json({
         success: true,
         message: `Connected! User: ${info?.username || username} (Status: ${info?.status || 'Active'})`,
@@ -95,7 +99,8 @@ async function testConnection(request: Request): Promise<Response> {
 
     return json({ success: false, error: 'Invalid configuration type.' }, { status: 400 });
   } catch (err: any) {
-    return json({ success: false, error: err?.message || 'Connection failed.' }, { status: 502 });
+    const status = err?.status === 429 ? 429 : 502;
+    return json({ success: false, error: err?.message || 'Connection failed.' }, { status });
   }
 }
 
@@ -228,7 +233,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     return json({ ok: false, error: 'Unknown API route.' }, { status: 404 });
   }
 
-  if (head === 'health') return json({ ok: true, version: '3.1.10-hide-wwe-rivals' }, { cache: 'no-store' });
+  if (head === 'health') return json({ ok: true, version: '3.1.11-xtream-rate-limit-guard' }, { cache: 'no-store' });
 
   // Everything else -> static configurator/landing assets.
   return assetResponse(env, request);

@@ -5,11 +5,76 @@ import { configFingerprint } from './config';
 import { cleanTitle, titleIdentity } from './cleaner';
 import { edgeCached, TTL } from './edgecache';
 import { parseM3UPlaylist } from './m3u';
-import { RawStream, XtreamClient } from './xtream';
+import { RawStream, XtreamCategory, XtreamClient } from './xtream';
 import { Genre, MediaKind, ProviderItem, UserConfig } from './types';
 
 function xtKind(kind: MediaKind): 'live' | 'movie' | 'series' {
   return kind === 'channel' ? 'live' : kind;
+}
+
+function xtreamCacheOptions(fp: string) {
+  return {
+    staleIfErrorSec: TTL.PROVIDER_STALE,
+    rateLimitBackoffSec: TTL.RATE_LIMIT_BACKOFF,
+    rateLimitKey: `xt:${fp}`
+  };
+}
+
+async function getXtreamCategories(
+  config: UserConfig,
+  kind: MediaKind,
+  ctx: ExecutionContext
+): Promise<XtreamCategory[]> {
+  const fp = configFingerprint(config);
+  const client = new XtreamClient(config.host!, config.username!, config.password!);
+  return edgeCached(
+    ctx,
+    `xt:genres:${fp}:${kind}`,
+    TTL.CATEGORIES,
+    () => client.getCategories(xtKind(kind)),
+    xtreamCacheOptions(fp)
+  );
+}
+
+export interface CachedProviderEpisode {
+  season: number;
+  episode: number;
+  title: string;
+  url: string;
+  quality?: string;
+  released?: string;
+  overview?: string;
+  thumbnail?: string;
+}
+
+export async function getCachedSeriesEpisodes(
+  config: UserConfig,
+  seriesId: string | number,
+  ctx: ExecutionContext
+): Promise<CachedProviderEpisode[]> {
+  if (config.type !== 'xtream' || !config.host || !config.username || !config.password) return [];
+  const fp = configFingerprint(config);
+  const client = new XtreamClient(config.host, config.username, config.password);
+  return edgeCached(
+    ctx,
+    `xt:series-info:${fp}:${String(seriesId)}`,
+    TTL.EPISODES,
+    () => client.listAllEpisodes(seriesId),
+    xtreamCacheOptions(fp)
+  );
+}
+
+export async function getCachedEpisodeStreams(
+  config: UserConfig,
+  seriesId: string | number,
+  season: number,
+  episode: number,
+  ctx: ExecutionContext
+): Promise<Array<{ url: string; title: string; quality?: string }>> {
+  const episodes = await getCachedSeriesEpisodes(config, seriesId, ctx);
+  return episodes
+    .filter((ep) => ep.season === season && ep.episode === episode)
+    .map((ep) => ({ url: ep.url, title: ep.title, quality: ep.quality }));
 }
 
 function parseProviderTimestamp(value: unknown): number | undefined {
@@ -87,17 +152,18 @@ export async function getItems(config: UserConfig, kind: MediaKind, ctx: Executi
     return edgeCached(ctx, `xt:items:${fp}:${kind}`, TTL.STREAMS, async () => {
       const client = new XtreamClient(config.host!, config.username!, config.password!);
       const xt = xtKind(kind);
-      const [cats, raw] = await Promise.all([
-        client.getCategories(xt).catch(() => []),
-        client.getStreams(xt)
-      ]);
+
+      // Fetch the expensive stream list first. If the provider is rate-limiting,
+      // stop here instead of firing a second category request in parallel.
+      const raw = await client.getStreams(xt);
+      const cats = await getXtreamCategories(config, kind, ctx).catch(() => []);
       const catMap = new Map(cats.map((c) => [c.category_id, c.category_name]));
       const selected = selectedXtreamCategoryIds(config, kind);
       const filtered = selected
         ? raw.filter((stream) => selected.has(String(stream.category_id ?? '')))
         : raw;
       return buildXtreamItems(filtered, kind, catMap, client);
-    });
+    }, xtreamCacheOptions(fp));
   }
 
   if (config.type === 'm3u' && config.m3uUrl) {
@@ -120,13 +186,10 @@ export async function getGenres(config: UserConfig, kind: MediaKind, ctx: Execut
   const fp = configFingerprint(config);
 
   if (config.type === 'xtream' && config.host && config.username && config.password) {
-    return edgeCached(ctx, `xt:genres:${fp}:${kind}`, TTL.CATEGORIES, async () => {
-      const client = new XtreamClient(config.host!, config.username!, config.password!);
-      const cats = await client.getCategories(xtKind(kind)).catch(() => []);
-      const selected = selectedXtreamCategoryIds(config, kind);
-      const visible = selected ? cats.filter((c) => selected.has(String(c.category_id))) : cats;
-      return visible.map((c) => ({ id: c.category_id, name: c.category_name }));
-    });
+    const cats = await getXtreamCategories(config, kind, ctx);
+    const selected = selectedXtreamCategoryIds(config, kind);
+    const visible = selected ? cats.filter((c) => selected.has(String(c.category_id))) : cats;
+    return visible.map((c) => ({ id: c.category_id, name: c.category_name }));
   }
 
   if (config.type === 'm3u' && config.m3uUrl) {
