@@ -33,3 +33,12 @@ TMDB_FALLBACK_KEY = "116f8e56d337e582db8e9eb6733d5cc5"
 
 # No secrets and no KV namespace are required: provider credentials live in each
 # user's manifest URL, never on the server.
+
+# Keep Cloudflare Workers Logs enabled across GitHub/Wrangler deployments.
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+invocation_logs = true
+head_sampling_rate = 1
