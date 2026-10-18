@@ -668,7 +668,6 @@ async function resolveGlobalStreams(
     episode !== undefined &&
     directTmdbMatches.length
   ) {
-    const client = new XtreamClient(config.host!, config.username!, config.password!);
     for (const item of directTmdbMatches.slice(0, 3)) {
       if (item.streamId === undefined) continue;
       const eps = await getCachedEpisodeStreams(config, item.streamId, season, episode, ctx);
@@ -698,7 +697,6 @@ async function resolveGlobalStreams(
   if (!isSeries || config.type === 'm3u') return itemsToStreams(matches);
 
   if (config.type === 'xtream' && season !== undefined && episode !== undefined) {
-    const client = new XtreamClient(config.host!, config.username!, config.password!);
     const out: StremioStream[] = [];
     for (const m of matches.slice(0, 3)) {
       if (m.item.streamId === undefined) continue;
