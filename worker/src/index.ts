@@ -104,10 +104,9 @@ async function testConnection(request: Request): Promise<Response> {
   }
 }
 
-async function handleRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+async function handleRequest(request: Request, env: Env, ctx: ExecutionContext, requestId: string): Promise<Response> {
   if (request.method === 'OPTIONS') return corsPreflight();
 
-  const requestId = crypto.randomUUID();
   const requestStartedAt = Date.now();
   const cf = (request as Request & { cf?: { colo?: string; asn?: number } }).cf;
   const url = new URL(request.url);
@@ -259,7 +258,7 @@ export default {
     const cf = (request as Request & { cf?: { colo?: string; asn?: number } }).cf;
     let response: Response;
     try {
-      response = await handleRequest(request, env, ctx);
+      response = await handleRequest(request, env, ctx, requestId);
     } catch (err: any) {
       response = json({ error: 'Internal error', detail: err?.message }, { status: 500 });
     }
