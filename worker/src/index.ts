@@ -107,6 +107,9 @@ async function testConnection(request: Request): Promise<Response> {
 async function handleRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (request.method === 'OPTIONS') return corsPreflight();
 
+  const requestId = crypto.randomUUID();
+  const requestStartedAt = Date.now();
+  const cf = (request as Request & { cf?: { colo?: string; asn?: number } }).cf;
   const url = new URL(request.url);
   const origin = url.origin;
   const segments = url.pathname.split('/').filter(Boolean);
@@ -116,6 +119,13 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   const configStr = idx > 0 ? segments.slice(0, idx).join('/') : '';
   const route = idx >= 0 ? segments.slice(idx) : segments;
   const head = route[0];
+  const routeClass = head === 'api' ? `api:${route[1] || 'unknown'}` :
+    head === 'catalog' ? 'catalog' : head === 'manifest.json' || head === 'demo-manifest.json' ? 'manifest' :
+    head === 'meta' ? 'meta' : head === 'stream' ? 'stream' : head === 'health' ? 'health' : 'other';
+  console.log('[IPTVBridge] Incoming request', JSON.stringify({
+    event: 'iptvbridge_request_start', requestId, method: request.method, route: routeClass,
+    colo: cf?.colo, asn: cf?.asn, startedAt: new Date(requestStartedAt).toISOString()
+  }));
 
   // Manifest
   if (head === 'manifest.json' || head === 'demo-manifest.json') {
@@ -241,10 +251,22 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const requestId = crypto.randomUUID();
+    const startedAt = Date.now();
+    const url = new URL(request.url);
+    const route = url.pathname.split('/').filter(Boolean).find((part) => ROUTE_KEYWORDS.has(part)) || 'other';
+    const routeClass = route === 'api' ? `api:${url.pathname.split('/').filter(Boolean).slice(-1)[0] || 'unknown'}` : route;
+    const cf = (request as Request & { cf?: { colo?: string; asn?: number } }).cf;
+    let response: Response;
     try {
-      return await handleRequest(request, env, ctx);
+      response = await handleRequest(request, env, ctx);
     } catch (err: any) {
-      return json({ error: 'Internal error', detail: err?.message }, { status: 500 });
+      response = json({ error: 'Internal error', detail: err?.message }, { status: 500 });
     }
+    console.log('[IPTVBridge] Request completed', JSON.stringify({
+      event: 'iptvbridge_request_complete', requestId, method: request.method, route: routeClass,
+      colo: cf?.colo, asn: cf?.asn, status: response.status, durationMs: Date.now() - startedAt
+    }));
+    return response;
   }
 };
