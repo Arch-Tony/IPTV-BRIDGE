@@ -57,8 +57,13 @@ export async function edgeCached<T>(
     }
   };
 
+  const cacheLabel = key.split(':').slice(0, 2).join(':'); // Never log per-user fingerprints or raw cache keys.
   const hit = await readJson(req);
-  if (hit !== undefined) return hit;
+  if (hit !== undefined) {
+    console.log('[IPTVBridge] Cache hit', JSON.stringify({ event: 'iptvbridge_cache_hit', cacheLabel, ttlSec }));
+    return hit;
+  }
+  console.log('[IPTVBridge] Cache miss', JSON.stringify({ event: 'iptvbridge_cache_miss', cacheLabel, ttlSec }));
 
   // If this provider recently returned 429, never probe it again during the
   // cooldown. Keep a process-local marker as well as the colo Cache API marker
@@ -70,6 +75,7 @@ export async function edgeCached<T>(
     (localUntil > Date.now() || !!(cooldownReq && (await cache.match(cooldownReq))));
   if (coolingDown) {
     const stale = await readJson(staleReq);
+    console.warn('[IPTVBridge] Provider cooldown active', JSON.stringify({ event: 'iptvbridge_cache_cooldown', cacheLabel, staleAvailable: stale !== undefined }));
     if (stale !== undefined) return stale;
     const error: any = new Error('Upstream 429 (cooldown)');
     error.status = 429;
@@ -77,7 +83,10 @@ export async function edgeCached<T>(
   }
 
   const existing = inflight.get(key) as Promise<T> | undefined;
-  if (existing) return existing;
+  if (existing) {
+    console.log('[IPTVBridge] Cache in-flight dedupe', JSON.stringify({ event: 'iptvbridge_cache_inflight_dedupe', cacheLabel }));
+    return existing;
+  }
 
   const promise = (async () => {
     try {
@@ -109,6 +118,7 @@ export async function edgeCached<T>(
         const requested = Number.isFinite(hinted) && hinted > 0 ? hinted : options.rateLimitBackoffSec;
         const cooldownSec = Math.max(60, Math.min(6 * 60 * 60, Math.ceil(requested)));
         localRateLimitUntil.set(cooldownKey, Date.now() + cooldownSec * 1000);
+        console.warn('[IPTVBridge] Provider cooldown set', JSON.stringify({ event: 'iptvbridge_cache_cooldown_set', cacheLabel, status, cooldownSec, retryAfterSeconds: Number.isFinite(hinted) && hinted > 0 ? hinted : undefined }));
         const marker = new Response('1', {
           headers: { 'Cache-Control': `public, max-age=${cooldownSec}` }
         });
