@@ -233,7 +233,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     return json({ ok: false, error: 'Unknown API route.' }, { status: 404 });
   }
 
-  if (head === 'health') return json({ ok: true, version: '3.1.11-xtream-rate-limit-guard' }, { cache: 'no-store' });
+  if (head === 'health') return json({ ok: true, version: '3.1.12-upstream-diagnostics' }, { cache: 'no-store' });
 
   // Everything else -> static configurator/landing assets.
   return assetResponse(env, request);
