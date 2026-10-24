@@ -66,6 +66,12 @@ async function getJson(url: string, timeoutMs = 15000): Promise<any> {
   const startedAt = Date.now();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  // Diagnostic IDs are deliberately independent of the credential-bearing URL.
+  const callId = crypto.randomUUID();
+  console.log('[IPTVBridge] Xtream upstream request start', JSON.stringify({
+    event: 'iptvbridge_xtream_upstream_start', callId, host: target.hostname,
+    path: target.pathname, action, timeoutMs, startedAt: new Date(startedAt).toISOString()
+  }));
   try {
     const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: ctrl.signal });
     if (!res.ok) {
@@ -73,6 +79,7 @@ async function getJson(url: string, timeoutMs = 15000): Promise<any> {
       // Never log the full URL: Xtream credentials are carried in its query string.
       console.warn('[IPTVBridge] Xtream upstream HTTP error', JSON.stringify({
         event: 'iptvbridge_xtream_upstream_http_error',
+        callId,
         host: target.hostname,
         path: target.pathname,
         action,
@@ -82,12 +89,18 @@ async function getJson(url: string, timeoutMs = 15000): Promise<any> {
       }));
       throw new XtreamUpstreamError(res.status, retryAfterSeconds);
     }
+    console.log('[IPTVBridge] Xtream upstream response', JSON.stringify({
+      event: 'iptvbridge_xtream_upstream_response', callId, host: target.hostname,
+      path: target.pathname, action, status: res.status,
+      durationMs: Date.now() - startedAt, contentType: res.headers.get('Content-Type') || undefined
+    }));
     return await res.json();
   } catch (err) {
     if (!(err instanceof XtreamUpstreamError)) {
       // Log only safe diagnostics; do not include the URL, username, or password.
       console.warn('[IPTVBridge] Xtream upstream request failed', JSON.stringify({
         event: 'iptvbridge_xtream_upstream_request_failed',
+        callId,
         host: target.hostname,
         path: target.pathname,
         action,
