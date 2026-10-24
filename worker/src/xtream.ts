@@ -61,12 +61,41 @@ function parseRetryAfter(value: string | null): number | undefined {
 }
 
 async function getJson(url: string, timeoutMs = 15000): Promise<any> {
+  const target = new URL(url);
+  const action = target.searchParams.get('action') || 'authenticate';
+  const startedAt = Date.now();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: ctrl.signal });
-    if (!res.ok) throw new XtreamUpstreamError(res.status, parseRetryAfter(res.headers.get('Retry-After')));
+    if (!res.ok) {
+      const retryAfterSeconds = parseRetryAfter(res.headers.get('Retry-After'));
+      // Never log the full URL: Xtream credentials are carried in its query string.
+      console.warn('[IPTVBridge] Xtream upstream HTTP error', JSON.stringify({
+        event: 'iptvbridge_xtream_upstream_http_error',
+        host: target.hostname,
+        path: target.pathname,
+        action,
+        status: res.status,
+        retryAfterSeconds,
+        durationMs: Date.now() - startedAt
+      }));
+      throw new XtreamUpstreamError(res.status, retryAfterSeconds);
+    }
     return await res.json();
+  } catch (err) {
+    if (!(err instanceof XtreamUpstreamError)) {
+      // Log only safe diagnostics; do not include the URL, username, or password.
+      console.warn('[IPTVBridge] Xtream upstream request failed', JSON.stringify({
+        event: 'iptvbridge_xtream_upstream_request_failed',
+        host: target.hostname,
+        path: target.pathname,
+        action,
+        errorName: err instanceof Error ? err.name : 'UnknownError',
+        durationMs: Date.now() - startedAt
+      }));
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
   }
