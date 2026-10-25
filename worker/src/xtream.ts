@@ -73,7 +73,7 @@ async function getJson(url: string, timeoutMs = 15000): Promise<any> {
     path: target.pathname, action, timeoutMs, startedAt: new Date(startedAt).toISOString()
   }));
   try {
-    const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: ctrl.signal });
+    const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: ctrl.signal, redirect: 'manual' });
     if (!res.ok) {
       const retryAfterSeconds = parseRetryAfter(res.headers.get('Retry-After'));
       // Never log the full URL: Xtream credentials are carried in its query string.
