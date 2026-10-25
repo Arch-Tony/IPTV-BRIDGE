@@ -149,7 +149,11 @@ export class XtreamClient {
   }
 
   private get base(): string {
-    return `${this.host}/player_api.php?username=${encodeURIComponent(this.username)}&password=${encodeURIComponent(this.password)}`;
+    // Match the isolated Deno diagnostic exactly: URL + URLSearchParams encoding.
+    const url = new URL('/player_api.php', this.host);
+    url.searchParams.set('username', this.username);
+    url.searchParams.set('password', this.password);
+    return url.toString();
   }
 
   async authenticate(): Promise<any> {
