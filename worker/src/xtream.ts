@@ -85,6 +85,15 @@ async function getJson(url: string, timeoutMs = 15000): Promise<any> {
         action,
         status: res.status,
         retryAfterSeconds,
+        responseHeaders: {
+          server: res.headers.get('Server') || undefined,
+          date: res.headers.get('Date') || undefined,
+          contentType: res.headers.get('Content-Type') || undefined,
+          cfRay: res.headers.get('CF-Ray') || undefined,
+          cfCacheStatus: res.headers.get('CF-Cache-Status') || undefined,
+          via: res.headers.get('Via') || undefined,
+          retryAfter: res.headers.get('Retry-After') || undefined
+        },
         durationMs: Date.now() - startedAt
       }));
       throw new XtreamUpstreamError(res.status, retryAfterSeconds);
