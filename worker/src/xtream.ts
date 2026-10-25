@@ -1,6 +1,6 @@
 // Xtream Codes API client using the global fetch() only — no axios / node http.
 
-const UA = 'IPTVSmartersPro/3.0.0 (Cloudflare Worker; IPTV Bridge)';
+const UA = 'IPTVSmartersPro/3.0.0';
 
 export interface XtreamCategory {
   category_id: string;
