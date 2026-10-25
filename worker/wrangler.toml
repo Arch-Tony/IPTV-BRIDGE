@@ -16,6 +16,8 @@ binding = "ASSETS"
 [vars]
 TMDB_FALLBACK_KEY = "116f8e56d337e582db8e9eb6733d5cc5"
 
+[previews]
+
 [observability]
 enabled = true
 head_sampling_rate = 1
