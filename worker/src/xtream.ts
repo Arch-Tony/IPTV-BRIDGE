@@ -57,8 +57,8 @@ function safeErrorPreview(body: string, target: URL): string {
   if (username) value = value.replaceAll(username, '[REDACTED_USERNAME]');
   if (password) value = value.replaceAll(password, '[REDACTED_PASSWORD]');
   value = value
-    .replace(/([?&](?:username|password)=)[^&\\s"'<>]+/gi, '$1[REDACTED]')
-    .replace(/https?:\\/\\/[^\\s"'<>]+/gi, '[URL_REDACTED]');
+    .replace(/([?&](?:username|password)=)[^&\s"'<>]+/gi, '$1[REDACTED]')
+    .replace(/https?:\/\/[^\s"'<>]+/gi, '[URL_REDACTED]');
   return value.slice(0, 800);
 }
 
