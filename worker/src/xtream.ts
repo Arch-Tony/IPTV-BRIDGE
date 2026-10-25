@@ -50,6 +50,18 @@ export class XtreamUpstreamError extends Error {
   }
 }
 
+function safeErrorPreview(body: string, target: URL): string {
+  const username = target.searchParams.get('username') || '';
+  const password = target.searchParams.get('password') || '';
+  let value = body;
+  if (username) value = value.replaceAll(username, '[REDACTED_USERNAME]');
+  if (password) value = value.replaceAll(password, '[REDACTED_PASSWORD]');
+  value = value
+    .replace(/([?&](?:username|password)=)[^&\\s"'<>]+/gi, '$1[REDACTED]')
+    .replace(/https?:\\/\\/[^\\s"'<>]+/gi, '[URL_REDACTED]');
+  return value.slice(0, 800);
+}
+
 function parseRetryAfter(value: string | null): number | undefined {
   if (!value) return undefined;
   const seconds = Number(value);
@@ -76,6 +88,8 @@ async function getJson(url: string, timeoutMs = 15000): Promise<any> {
     const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: ctrl.signal, redirect: 'manual' });
     if (!res.ok) {
       const retryAfterSeconds = parseRetryAfter(res.headers.get('Retry-After'));
+      // Read only a short, credential-scrubbed error preview to identify the upstream/CDN response.
+      const errorPreview = safeErrorPreview(await res.text(), target);
       // Never log the full URL: Xtream credentials are carried in its query string.
       console.warn('[IPTVBridge] Xtream upstream HTTP error', JSON.stringify({
         event: 'iptvbridge_xtream_upstream_http_error',
@@ -85,6 +99,7 @@ async function getJson(url: string, timeoutMs = 15000): Promise<any> {
         action,
         status: res.status,
         retryAfterSeconds,
+        errorPreview,
         responseHeaders: {
           server: res.headers.get('Server') || undefined,
           date: res.headers.get('Date') || undefined,
